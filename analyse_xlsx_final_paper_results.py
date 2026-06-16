@@ -54,6 +54,41 @@ PUB_DPI = 300
 PUB_SINGLE_COL_WIDTH = 3.35
 PUB_DOUBLE_COL_WIDTH = 6.85
 
+PRETRAINED_TRANSFORMER_CATEGORY = "Fine-Tuned/Pre-Trained Transformers"
+PROMPTED_LLM_CATEGORIES = {
+    "Prompt-Based LLM",
+    "Prompt-Based Large Language Models (LLMs)",
+}
+BASE_MODEL_COLUMN = "Base model (for fine-tuned transformers and prompted LLMs)"
+
+_PRETRAINED_BASE_PATTERNS = [
+    (r"medroberta\.nl", "MedRoBERTa.nl"),
+    (r"medroberta", "MedRoBERTa"),
+    (r"robbert", "RobBERT"),
+    (r"roberta", "RoBERTa"),
+    (r"bertje", "BERTje"),
+    (r"hagalbert", "HAGALBERT"),
+    (r"longformer", "Longformer"),
+    (r"dragon", "DRAGON"),
+    (r"bert", "BERT"),
+]
+
+_PROMPTED_LLM_BASE_PATTERNS = [
+    (r"gpt-4", "GPT-4"),
+    (r"gpt-3\.5", "GPT-3.5"),
+    (r"gemini", "Gemini"),
+    (r"deepseek-r1-14b", "DeepSeek-R1-14B"),
+    (r"mistral-nemo-12b", "Mistral-Nemo-12B"),
+    (r"llama-3\.3-70b", "Llama-3.3-70B"),
+    (r"llama-3\.2-3b", "Llama-3.2-3B"),
+    (r"llama-3\.1-8b", "Llama-3.1-8B"),
+    (r"llama-3(?:\.0)?", "Llama-3"),
+    (r"gemma-2-9b", "Gemma-2-9B"),
+    (r"gemma-2-2b", "Gemma-2-2B"),
+    (r"phi-4-14b", "Phi-4-14B"),
+    (r"qwen-2\.5-14b", "Qwen-2.5-14B"),
+]
+
 
 def _setup_publication_style() -> None:
     import matplotlib as mpl
@@ -167,6 +202,49 @@ def _extract_first_number(value: str) -> float | None:
 def _contains_any(value: str, terms: list[str]) -> bool:
     value = str(value).lower()
     return any(re.search(rf"\b{re.escape(term)}\b", value) for term in terms)
+
+
+def _normalize_model_text(value: object) -> str:
+    text = "" if value is None else str(value)
+    text = text.replace("\t", " ").strip()
+    return re.sub(r"\s+", " ", text)
+
+
+def _extract_base_model_label(text: object, patterns: list[tuple[str, str]]) -> str:
+    haystack = _normalize_model_text(text).lower()
+    if not haystack:
+        return ""
+
+    for pattern, label in patterns:
+        if re.search(pattern, haystack, flags=re.IGNORECASE):
+            return label
+    return ""
+
+
+def _base_model_label_for_row(row: pd.Series) -> str:
+    explicit_base_model = _normalize_model_text(
+        row.get(BASE_MODEL_COLUMN, row.get("Base model", ""))
+    )
+    if explicit_base_model:
+        return explicit_base_model
+
+    category = _normalize_model_text(row.get("Category", ""))
+    type_of_model = _normalize_model_text(row.get("Type of model", ""))
+    abbreviation = _normalize_model_text(row.get("Model abbreviation", ""))
+
+    if category in PROMPTED_LLM_CATEGORIES:
+        return (
+            _extract_base_model_label(type_of_model, _PROMPTED_LLM_BASE_PATTERNS)
+            or _extract_base_model_label(abbreviation, _PROMPTED_LLM_BASE_PATTERNS)
+        )
+
+    if category == PRETRAINED_TRANSFORMER_CATEGORY:
+        return (
+            _extract_base_model_label(type_of_model, _PRETRAINED_BASE_PATTERNS)
+            or _extract_base_model_label(abbreviation, _PRETRAINED_BASE_PATTERNS)
+        )
+
+    return ""
 
 
 def _infer_sample_unit(ev_size: str, ev_text_type: str, ev_patient_group: str) -> str | None:
@@ -989,7 +1067,17 @@ def create_comparator_graph(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     optional_columns = [
-        col for col in ["Main metric", "Ev metrics", "Title"] if col in df.columns
+        col
+        for col in [
+            "Main metric",
+            "Ev metrics",
+            "Title",
+            BASE_MODEL_COLUMN,
+            "Base model",
+            "Category",
+            "Type of model",
+        ]
+        if col in df.columns
     ]
     working_columns = required_columns + optional_columns
 
@@ -1017,13 +1105,30 @@ def create_comparator_graph(df: pd.DataFrame) -> pd.DataFrame:
             }
 
             for col in optional_columns:
+                if col in {BASE_MODEL_COLUMN, "Base model", "Category", "Type of model"}:
+                    if col in {BASE_MODEL_COLUMN, "Base model"}:
+                        edge["base model 1"] = row_1[col]
+                        edge["base model 2"] = row_2[col]
+                    else:
+                        edge[f"{col} 1"] = row_1[col]
+                        edge[f"{col} 2"] = row_2[col]
+                    continue
                 edge[col] = row_1[col]
 
             edges.append(edge)
 
+    numbered_optional_columns = []
+    for col in optional_columns:
+        if col in {BASE_MODEL_COLUMN, "Base model", "Category", "Type of model"}:
+            if col in {BASE_MODEL_COLUMN, "Base model"}:
+                numbered_optional_columns.extend(["base model 1", "base model 2"])
+                continue
+            numbered_optional_columns.extend([f"{col} 1", f"{col} 2"])
+        else:
+            numbered_optional_columns.append(col)
     columns = [
         "Comparator block",
-        *optional_columns,
+        *numbered_optional_columns,
         "model abbreviation 1",
         "usage category 1",
         "model architecture category 1",
@@ -1036,6 +1141,141 @@ def create_comparator_graph(df: pd.DataFrame) -> pd.DataFrame:
         "source row 2",
     ]
     return pd.DataFrame(edges, columns=columns)
+
+
+def _comparison_mode_config() -> dict[str, dict[str, object]]:
+    return {
+        "architecture": {
+            "label": "Architecture categories",
+            "node_field": "model architecture category",
+            "filter_categories": None,
+            "detail_field": "Model architecture category",
+        },
+        "pretrained_base": {
+            "label": "Base models: pretrained transformers",
+            "node_field": "base model",
+            "filter_categories": {PRETRAINED_TRANSFORMER_CATEGORY},
+            "detail_field": "Base model",
+        },
+        "prompted_base": {
+            "label": "Base models: prompted LLMs",
+            "node_field": "base model",
+            "filter_categories": PROMPTED_LLM_CATEGORIES,
+            "detail_field": "Base model",
+        },
+    }
+
+
+def _prepare_comparison_graph_rows(
+    pairwise_df: pd.DataFrame,
+    mode: str,
+    include_self_edges: bool = False,
+) -> tuple[list[str], pd.DataFrame]:
+    config = _comparison_mode_config()
+    if mode not in config:
+        raise ValueError(f"Unknown comparison mode: {mode}")
+
+    mode_cfg = config[mode]
+    required_columns = [
+        "usage category 1",
+        "usage category 2",
+        "metric value 1",
+        "metric value 2",
+        "model abbreviation 1",
+        "model abbreviation 2",
+    ]
+    missing_columns = [col for col in required_columns if col not in pairwise_df.columns]
+    if missing_columns:
+        raise ValueError(
+            f"Missing expected columns: {missing_columns}. "
+            f"Available columns: {list(pairwise_df.columns)}"
+        )
+
+    comparisons = pairwise_df.copy()
+    comparisons["metric value 1"] = pd.to_numeric(
+        comparisons["metric value 1"], errors="coerce"
+    )
+    comparisons["metric value 2"] = pd.to_numeric(
+        comparisons["metric value 2"], errors="coerce"
+    )
+    comparisons = comparisons.dropna(subset=required_columns).copy()
+    comparisons = comparisons[
+        comparisons["usage category 1"] == comparisons["usage category 2"]
+    ].copy()
+
+    if mode == "architecture":
+        comparisons["node 1"] = comparisons["model architecture category 1"]
+        comparisons["node 2"] = comparisons["model architecture category 2"]
+    else:
+        filter_categories = mode_cfg["filter_categories"]
+        if (
+            filter_categories is not None
+            and "model architecture category 1" in comparisons.columns
+            and "model architecture category 2" in comparisons.columns
+        ):
+            comparisons = comparisons[
+                comparisons["model architecture category 1"].isin(filter_categories)
+                & comparisons["model architecture category 2"].isin(filter_categories)
+            ].copy()
+
+        if "base model 1" in comparisons.columns and "base model 2" in comparisons.columns:
+            comparisons = comparisons[
+                comparisons["base model 1"].astype(str).str.strip().ne("")
+                & comparisons["base model 2"].astype(str).str.strip().ne("")
+            ].copy()
+            comparisons["node 1"] = comparisons["base model 1"]
+            comparisons["node 2"] = comparisons["base model 2"]
+        else:
+            comparisons["base model 1"] = comparisons.apply(
+                lambda row: _base_model_label_for_row(
+                    pd.Series({
+                        "Category": row.get("model architecture category 1", ""),
+                        "Type of model": row.get("Type of model 1", ""),
+                        "Model abbreviation": row.get("model abbreviation 1", ""),
+                    })
+                ),
+                axis=1,
+            )
+            comparisons["base model 2"] = comparisons.apply(
+                lambda row: _base_model_label_for_row(
+                    pd.Series({
+                        "Category": row.get("model architecture category 2", ""),
+                        "Type of model": row.get("Type of model 2", ""),
+                        "Model abbreviation": row.get("model abbreviation 2", ""),
+                    })
+                ),
+                axis=1,
+            )
+            comparisons = comparisons[
+                comparisons["base model 1"].astype(str).str.strip().ne("")
+                & comparisons["base model 2"].astype(str).str.strip().ne("")
+            ].copy()
+            comparisons["node 1"] = comparisons["base model 1"]
+            comparisons["node 2"] = comparisons["base model 2"]
+
+    comparisons = comparisons[comparisons["metric value 1"] != comparisons["metric value 2"]].copy()
+    comparisons["winner"] = comparisons.apply(
+        lambda row: row["node 1"]
+        if row["metric value 1"] > row["metric value 2"]
+        else row["node 2"],
+        axis=1,
+    )
+    comparisons["loser"] = comparisons.apply(
+        lambda row: row["node 2"]
+        if row["metric value 1"] > row["metric value 2"]
+        else row["node 1"],
+        axis=1,
+    )
+
+    if not include_self_edges:
+        comparisons = comparisons[comparisons["winner"] != comparisons["loser"]].copy()
+
+    # Make the relevant node labels available for the graph builder.
+    node_rows = comparisons.copy()
+    nodes = sorted(
+        set(node_rows["node 1"].dropna()) | set(node_rows["node 2"].dropna())
+    )
+    return nodes, comparisons
 
 
 
@@ -2223,116 +2463,68 @@ def create_interactive_model_architecture_graph_html(
             f"Available columns: {list(pairwise_df.columns)}"
         )
 
-    comparisons = pairwise_df.copy()
-    comparisons["metric value 1"] = pd.to_numeric(
-        comparisons["metric value 1"], errors="coerce"
-    )
-    comparisons["metric value 2"] = pd.to_numeric(
-        comparisons["metric value 2"], errors="coerce"
-    )
-    comparisons = comparisons.dropna(subset=required_columns)
-    comparisons = comparisons[
-        comparisons["usage category 1"] == comparisons["usage category 2"]
-    ].copy()
-    same_usage_comparisons = comparisons.copy()
-    comparisons = comparisons[
-        comparisons["metric value 1"] != comparisons["metric value 2"]
-    ].copy()
-
-    comparisons["winner_architecture"] = comparisons.apply(
-        lambda row: row["model architecture category 1"]
-        if row["metric value 1"] > row["metric value 2"]
-        else row["model architecture category 2"],
-        axis=1,
-    )
-    comparisons["loser_architecture"] = comparisons.apply(
-        lambda row: row["model architecture category 2"]
-        if row["metric value 1"] > row["metric value 2"]
-        else row["model architecture category 1"],
-        axis=1,
-    )
-    comparisons["winner_model"] = comparisons.apply(
-        lambda row: row["model abbreviation 1"]
-        if row["metric value 1"] > row["metric value 2"]
-        else row["model abbreviation 2"],
-        axis=1,
-    )
-    comparisons["loser_model"] = comparisons.apply(
-        lambda row: row["model abbreviation 2"]
-        if row["metric value 1"] > row["metric value 2"]
-        else row["model abbreviation 1"],
-        axis=1,
-    )
-    comparisons["winner_metric_value"] = comparisons.apply(
-        lambda row: row["metric value 1"]
-        if row["metric value 1"] > row["metric value 2"]
-        else row["metric value 2"],
-        axis=1,
-    )
-    comparisons["loser_metric_value"] = comparisons.apply(
-        lambda row: row["metric value 2"]
-        if row["metric value 1"] > row["metric value 2"]
-        else row["metric value 1"],
-        axis=1,
-    )
-
-    if not include_self_edges:
-        comparisons = comparisons[
-            comparisons["winner_architecture"] != comparisons["loser_architecture"]
-        ].copy()
-
-    graph_data = {}
     optional_columns = [
         col for col in ["Comparator block", "Title", "Main metric", "Ev metrics"]
-        if col in comparisons.columns
+        if col in pairwise_df.columns
     ]
-
-    for usage_category, category_nodes_df in same_usage_comparisons.groupby(
-        "usage category 1",
-        sort=True,
-    ):
-        nodes = sorted(
-            set(category_nodes_df["model architecture category 1"].dropna())
-            | set(category_nodes_df["model architecture category 2"].dropna())
+    graph_data = {}
+    for mode_name, mode_cfg in _comparison_mode_config().items():
+        _, comparisons = _prepare_comparison_graph_rows(
+            pairwise_df,
+            mode_name,
+            include_self_edges=include_self_edges,
         )
-        category_df = comparisons[
-            comparisons["usage category 1"] == usage_category
-        ]
-        edges = []
-        grouped = (
-            category_df
-            .groupby(["winner_architecture", "loser_architecture"], sort=True)
-        )
-        for (winner, loser), edge_df in grouped:
-            details = []
-            for row_dict in edge_df.to_dict(orient="records"):
-                detail = {
-                    "winner_model": row_dict["winner_model"],
-                    "winner_architecture": row_dict["winner_architecture"],
-                    "winner_metric_value": row_dict["winner_metric_value"],
-                    "loser_model": row_dict["loser_model"],
-                    "loser_architecture": row_dict["loser_architecture"],
-                    "loser_metric_value": row_dict["loser_metric_value"],
-                }
-                for col in optional_columns:
-                    detail[col] = row_dict.get(col)
-                details.append(detail)
 
-            edges.append({
-                "source": winner,
-                "target": loser,
-                "weight": int(len(edge_df)),
-                "details": details,
-            })
-
-        if not edges:
+        mode_graph = {
+            "label": mode_cfg["label"],
+            "detail_label": mode_cfg["detail_field"],
+            "usage_categories": {},
+        }
+        if comparisons.empty:
+            graph_data[mode_name] = mode_graph
             continue
 
-        edges = sorted(edges, key=lambda edge: edge["weight"], reverse=True)
-        graph_data[usage_category] = {
-            "nodes": _weighted_circular_node_order(nodes, edges),
-            "edges": edges,
-        }
+        for usage_category, category_df in comparisons.groupby("usage category 1", sort=True):
+            category_nodes = sorted(
+                set(category_df["node 1"].dropna()) | set(category_df["node 2"].dropna())
+            )
+            edges = []
+            grouped = category_df.groupby(["winner", "loser"], sort=True)
+            for (winner, loser), edge_df in grouped:
+                details = []
+                for row_dict in edge_df.to_dict(orient="records"):
+                    winner_first = row_dict["metric value 1"] > row_dict["metric value 2"]
+                    winner_side = "1" if winner_first else "2"
+                    loser_side = "2" if winner_first else "1"
+                    detail = {
+                        "winner_model": row_dict[f"model abbreviation {winner_side}"],
+                        "winner_node": row_dict[f"node {winner_side}"],
+                        "winner_metric_value": row_dict[f"metric value {winner_side}"],
+                        "loser_model": row_dict[f"model abbreviation {loser_side}"],
+                        "loser_node": row_dict[f"node {loser_side}"],
+                        "loser_metric_value": row_dict[f"metric value {loser_side}"],
+                    }
+                    for col in optional_columns:
+                        detail[col] = row_dict.get(col, "")
+                    details.append(detail)
+
+                edges.append({
+                    "source": winner,
+                    "target": loser,
+                    "weight": int(len(edge_df)),
+                    "details": details,
+                })
+
+            if not edges:
+                continue
+
+            edges = sorted(edges, key=lambda edge: edge["weight"], reverse=True)
+            mode_graph["usage_categories"][usage_category] = {
+                "nodes": _weighted_circular_node_order(category_nodes, edges),
+                "edges": edges,
+            }
+
+        graph_data[mode_name] = mode_graph
 
     json_text = json.dumps(graph_data, ensure_ascii=False)
     json_text = json_text.replace("</", "<\\/")
@@ -2341,7 +2533,7 @@ def create_interactive_model_architecture_graph_html(
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Model Architecture Win Graphs</title>
+<title>Model Comparison Dashboard</title>
 <style>
   :root {{
     --ink: #17212b;
@@ -2542,8 +2734,8 @@ def create_interactive_model_architecture_graph_html(
 </head>
 <body>
 <header>
-  <h1>Model Architecture Wins by Usage Category</h1>
-  <div class="hint">Arrow direction is winner → loser. Click an arrow to inspect the model comparisons and study titles behind it.</div>
+  <h1>Model Comparison Dashboard</h1>
+  <div class="hint">Switch between architecture-level and base-model-level views. Arrow direction is winner → loser.</div>
   <div class="refbar">This dashboard corresponds to the Zenodo preprint <a href="https://zenodo.org/records/19461436" target="_blank" rel="noopener">Natural language processing and language models for Dutch clinical text: a systematic review</a> (DOI 10.5281/zenodo.19461436).</div>
   <div class="nav">
     <a href="model_catalog_dashboard.html">Model catalog</a>
@@ -2553,10 +2745,12 @@ def create_interactive_model_architecture_graph_html(
 <main class="layout">
   <section class="panel">
     <div class="toolbar">
+      <label for="mode">Comparison level</label>
+      <select id="mode"></select>
       <label for="category">Usage category</label>
       <select id="category"></select>
     </div>
-    <svg id="graph" viewBox="0 0 900 720" role="img" aria-label="Directed model architecture graph"></svg>
+    <svg id="graph" viewBox="0 0 900 720" role="img" aria-label="Directed model comparison graph"></svg>
   </section>
   <aside class="panel">
     <div id="details" class="empty">Select a usage category and click an arrow.</div>
@@ -2565,6 +2759,7 @@ def create_interactive_model_architecture_graph_html(
 <script id="graph-data" type="application/json">{json_text}</script>
 <script>
 const DATA = JSON.parse(document.getElementById("graph-data").textContent);
+const modeSelect = document.getElementById("mode");
 const categorySelect = document.getElementById("category");
 const svg = document.getElementById("graph");
 const details = document.getElementById("details");
@@ -2635,6 +2830,8 @@ function curvePoint(start, end, rad, t = 0.78) {{
   return {{x, y, angle}};
 }}
 
+let currentMode = "";
+
 function renderDetails(edge) {{
   details.className = "";
   details.innerHTML = `
@@ -2655,9 +2852,9 @@ function renderDetails(edge) {{
       <tbody>
         ${{edge.details.map(d => `
           <tr>
-            <td>${{esc(d.winner_model)}}<br/><small>${{esc(d.winner_architecture)}}</small></td>
+            <td>${{esc(d.winner_model)}}<br/><small>${{esc(d.winner_node)}}</small></td>
             <td>${{numberText(d.winner_metric_value)}}</td>
-            <td>${{esc(d.loser_model)}}<br/><small>${{esc(d.loser_architecture)}}</small></td>
+            <td>${{esc(d.loser_model)}}<br/><small>${{esc(d.loser_node)}}</small></td>
             <td>${{numberText(d.loser_metric_value)}}</td>
             <td>${{esc(d["Main metric"] || d["Ev metrics"] || "")}}</td>
             <td>${{esc(d["Comparator block"] || "")}}</td>
@@ -2669,22 +2866,50 @@ function renderDetails(edge) {{
   `;
 }}
 
-function renderGraph(category) {{
+function renderModeOptions() {{
+  const entries = Object.entries(DATA);
+  modeSelect.innerHTML = entries.map(([key, value]) => `<option value="${{esc(key)}}">${{esc(value.label || key)}}</option>`).join("");
+}}
+
+function renderCategoryOptions(mode) {{
+  const modeData = DATA[mode] || {{}};
+  const categories = Object.keys(modeData.usage_categories || {{}}).sort();
+  categorySelect.innerHTML = categories.map(value => `<option value="${{esc(value)}}">${{esc(value)}}</option>`).join("");
+}}
+
+function renderGraph(mode, category) {{
   svg.innerHTML = "";
   details.className = "empty";
   details.textContent = "Click an arrow to inspect the comparisons behind it.";
 
-  const data = DATA[category] || {{nodes: [], edges: []}};
+  const modeData = DATA[mode] || {{usage_categories: {{}}}};
+  const data = modeData.usage_categories?.[category] || {{nodes: [], edges: []}};
   const width = 900;
   const height = 720;
   const cx = width / 2;
   const cy = height / 2;
   const radius = Math.min(width, height) * 0.37;
-  const nodeRadius = 38;
+  const nodeCount = data.nodes.length || 1;
+  const nodeRadius = Math.max(
+    16,
+    Math.min(38, Math.round(42 - (nodeCount * 0.75)))
+  );
   const weights = data.edges.map(e => e.weight);
   const minLog = weights.length ? Math.min(...weights.map(w => Math.log1p(w))) : 0;
   const maxLog = weights.length ? Math.max(...weights.map(w => Math.log1p(w))) : 0;
   const strength = (w) => maxLog === minLog ? 1 : (Math.log1p(w) - minLog) / (maxLog - minLog);
+  const edgeRank = new Map(
+    [...data.edges]
+      .sort((a, b) => b.weight - a.weight)
+      .map((edge, idx) => [`${{edge.source}}|||${{edge.target}}`, idx])
+  );
+  const renderedEdges = [...data.edges].sort((a, b) => {{
+    if (a.weight !== b.weight) return a.weight - b.weight;
+    const sourceCmp = (a.source || "").localeCompare(b.source || "", undefined, {{numeric: true, sensitivity: "base"}});
+    if (sourceCmp !== 0) return sourceCmp;
+    return (a.target || "").localeCompare(b.target || "", undefined, {{numeric: true, sensitivity: "base"}});
+  }});
+  const isPromptedBase = mode === "prompted_base";
 
   const defs = makeSvg("defs");
   const marker = makeSvg("marker", {{
@@ -2735,13 +2960,17 @@ function renderGraph(category) {{
     }});
   }});
 
-  data.edges.forEach((edge, i) => {{
+  renderedEdges.forEach((edge, i) => {{
     const source = positions.get(edge.source);
     const target = positions.get(edge.target);
     if (!source || !target) return;
     const s = strength(edge.weight);
     const strokeWidth = 1 + 5 * s;
-    const opacity = 0.18 + 0.72 * s;
+    const edgeKey = `${{edge.source}}|||${{edge.target}}`;
+    const rank = edgeRank.get(edgeKey) ?? i;
+    const opacity = isPromptedBase
+      ? (rank < 10 ? 0.96 - (rank * 0.06) : 0.05)
+      : (0.18 + 0.72 * s);
     const rad = 0.22;
     const dx = target.x - source.x;
     const dy = target.y - source.y;
@@ -2781,6 +3010,7 @@ function renderGraph(category) {{
     group.addEventListener("click", () => {{
       svg.querySelectorAll(".edge").forEach(el => el.classList.remove("active"));
       group.classList.add("active");
+      currentMode = mode;
       renderDetails(edge);
     }});
     svg.appendChild(group);
@@ -2808,19 +3038,29 @@ function renderGraph(category) {{
   }});
 }}
 
-Object.keys(DATA).forEach(category => {{
-  const option = document.createElement("option");
-  option.value = category;
-  option.textContent = category;
-  categorySelect.appendChild(option);
+renderModeOptions();
+currentMode = modeSelect.options.length ? modeSelect.value : "";
+renderCategoryOptions(currentMode);
+
+modeSelect.addEventListener("change", () => {{
+  currentMode = modeSelect.value;
+  renderCategoryOptions(currentMode);
+  categorySelect.selectedIndex = 0;
+  renderGraph(currentMode, categorySelect.value);
 }});
 
-categorySelect.addEventListener("change", () => renderGraph(categorySelect.value));
-if (categorySelect.options.length) {{
-  categorySelect.selectedIndex = 0;
-  renderGraph(categorySelect.value);
+categorySelect.addEventListener("change", () => renderGraph(currentMode, categorySelect.value));
+
+if (modeSelect.options.length) {{
+  modeSelect.selectedIndex = 0;
+  currentMode = modeSelect.value;
+  renderCategoryOptions(currentMode);
+  if (categorySelect.options.length) {{
+    categorySelect.selectedIndex = 0;
+  }}
+  renderGraph(currentMode, categorySelect.value);
 }} else {{
-  details.textContent = "No cross-architecture comparisons available.";
+  details.textContent = "No comparisons available.";
 }}
 </script>
 </body>

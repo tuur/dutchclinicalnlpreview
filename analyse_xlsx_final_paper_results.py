@@ -1883,21 +1883,31 @@ def create_model_catalog_dashboard_html(
             f"Available columns: {list(df.columns)}"
         )
 
+    parsed_eval = _unique_eval_sample_sizes_by_study(parse_eval_sample_sizes(df))
+    parsed_eval_titles = set(
+        _normalize_docx_text(value)
+        for value in parsed_eval["Title"].dropna().tolist()
+        if _normalize_docx_text(value)
+    ) if "Title" in parsed_eval.columns else set()
+
     rows = []
     for _, row in df.iterrows():
         year_value = pd.to_numeric(row["Year"], errors="coerce")
+        shared = _normalize_docx_text(row["Model shared"])
+        location = _normalize_docx_text(row["Code location(s)"]) if shared.lower() in {"yes", "partially"} else ""
+        normalized_task_description = _normalize_docx_text(row["NLP Task description"])
         rows.append({
             "author": _normalize_docx_text(row["First author"]),
             "abbreviation": _normalize_docx_text(row["Model abbreviation"]),
+            "title": _normalize_docx_text(row["Title"]),
             "year": int(year_value) if pd.notna(year_value) else "",
             "usage_category": _normalize_docx_text(row["Usage category"]),
-            "nlp_task_description": _normalize_docx_text(row["NLP Task description"]),
-            "shared": _normalize_docx_text(row["Model shared"]),
-            "model_location": _normalize_docx_text(row["Code location(s)"]) or "Not listed",
+            "nlp_task_description": normalized_task_description,
+            "shared": shared,
+            "model_location": location or "Not listed",
             "evaluation_flag": _normalize_docx_text(row.get("Ev conducted yes/no", "")),
+            "has_parsed_eval_sample_size": _normalize_docx_text(row["Title"]) in parsed_eval_titles,
         })
-
-    parsed_eval = _unique_eval_sample_sizes_by_study(parse_eval_sample_sizes(df))
 
     total_rows = len(df)
     total_models = int(df["Model abbreviation"].nunique(dropna=True)) if "Model abbreviation" in df.columns else 0
@@ -2128,12 +2138,12 @@ def create_model_catalog_dashboard_html(
   </div>
 </header>
 <section class="stats">
-  <div class="stat"><div class="label">Rows</div><div class="value">__TOTAL_ROWS__</div></div>
-  <div class="stat"><div class="label">Models</div><div class="value">__TOTAL_MODELS__</div></div>
-  <div class="stat"><div class="label">Evaluations</div><div class="value">__EVALUATION_ROWS__</div></div>
-  <div class="stat"><div class="label">Shared</div><div class="value">__SHARED_ROWS__</div></div>
-  <div class="stat"><div class="label">Not shared</div><div class="value">__NOT_SHARED_ROWS__</div></div>
-  <div class="stat"><div class="label">Eval sample sizes</div><div class="value">__EVAL_SAMPLE_SIZE_ENTRIES__</div></div>
+  <div class="stat"><div class="label">Rows</div><div class="value" id="statRows">0</div></div>
+  <div class="stat"><div class="label">Models</div><div class="value" id="statModels">0</div></div>
+  <div class="stat"><div class="label">Evaluations</div><div class="value" id="statEvaluations">0</div></div>
+  <div class="stat"><div class="label">Shared</div><div class="value" id="statShared">0</div></div>
+  <div class="stat"><div class="label">Not shared</div><div class="value" id="statNotShared">0</div></div>
+  <div class="stat"><div class="label">Eval sample sizes</div><div class="value" id="statEvalSizes">0</div></div>
 </section>
 <section class="toolbar">
   <div class="control">
@@ -2195,6 +2205,31 @@ function isShared(value) {{
   return v === "yes" || v === "partially";
 }}
 
+function isEvaluated(value) {{
+  return normalize(value) === "yes";
+}}
+
+function computeStats(rows) {{
+  return {{
+    rows: rows.length,
+    models: new Set(rows.map(row => row.abbreviation).filter(Boolean)).size,
+    evaluations: rows.filter(row => isEvaluated(row.evaluation_flag)).length,
+    shared: rows.filter(row => isShared(row.shared)).length,
+    notShared: rows.filter(row => normalize(row.shared) === "no").length,
+    evalSampleSizes: new Set(rows.filter(row => row.has_parsed_eval_sample_size).map(row => row.title).filter(Boolean)).size,
+  }};
+}}
+
+function renderStats(rows) {{
+  const stats = computeStats(rows);
+  document.getElementById("statRows").textContent = stats.rows.toLocaleString();
+  document.getElementById("statModels").textContent = stats.models.toLocaleString();
+  document.getElementById("statEvaluations").textContent = stats.evaluations.toLocaleString();
+  document.getElementById("statShared").textContent = stats.shared.toLocaleString();
+  document.getElementById("statNotShared").textContent = stats.notShared.toLocaleString();
+  document.getElementById("statEvalSizes").textContent = stats.evalSampleSizes.toLocaleString();
+}}
+
 const usageCategories = [...new Set(DATA.map(row => row.usage_category).filter(Boolean))].sort();
 usageSelect.innerHTML = '<option value="">All usage categories</option>' + usageCategories.map(value => `<option value="${{esc(value)}}">${{esc(value)}}</option>`).join("");
 
@@ -2217,6 +2252,7 @@ function passesFilters(row) {{
 
 function render() {{
   const filtered = DATA.filter(passesFilters);
+  renderStats(filtered);
   tableBody.innerHTML = filtered.map(row => `
     <tr>
       <td>${{esc(row.author)}}</td>
@@ -2225,7 +2261,7 @@ function render() {{
       <td>${{esc(row.usage_category)}}</td>
       <td>${{esc(row.nlp_task_description)}}</td>
       <td><span class="pill">${{esc(row.shared || "n/a")}}</span></td>
-      <td>${{esc(row.model_location)}}</td>
+      <td>${{isShared(row.shared) ? esc(row.model_location) : ""}}</td>
     </tr>
   `).join("");
   empty.style.display = filtered.length ? "none" : "block";

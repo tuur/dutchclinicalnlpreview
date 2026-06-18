@@ -9,6 +9,7 @@ import zipfile
 from datetime import datetime, timezone
 from itertools import combinations
 from pathlib import Path
+from urllib.parse import urlparse
 from xml.sax.saxutils import escape as xml_escape
 
 import pandas as pd
@@ -53,6 +54,109 @@ PATIENT_UNIT_TERMS = [
 PUB_DPI = 300
 PUB_SINGLE_COL_WIDTH = 3.35
 PUB_DOUBLE_COL_WIDTH = 6.85
+PUB_SAMPLE_PLOT_WIDTH = 6.15
+
+PLOT_DEV_COLOR = "#2f6f9f"
+PLOT_EVAL_COLOR = "#d46b35"
+PLOT_NEUTRAL_COLOR = "#4f6f8f"
+PLOT_INK_COLOR = "#17212b"
+PLOT_MUTED_COLOR = "#5d6d7e"
+PLOT_LINE_COLOR = "#d6dde5"
+PLOT_BG_COLOR = "#f7fbff"
+PLOT_PANEL_BG_COLOR = "#f6f7f8"
+PLOT_TEXT_DARK = "#1a1a1a"
+PLOT_TEXT_LIGHT = "#555555"
+
+ARCHITECTURE_COLOR_ORDER = [
+    "Rule-based",
+    "Traditional ML",
+    "Feature Engineering & Other",
+    "Deep Learning (Non-Transformer)",
+    "Ensemble",
+    "Fine-Tuned/Pre-Trained Transformers",
+    "Prompt-Based LLM",
+]
+ARCHITECTURE_COLOR_ALIASES = {
+    "Prompt-Based Large Language Models (LLMs)": "Prompt-Based LLM",
+}
+ARCHITECTURE_COLOR_SEQUENCE = [
+    "#6f6f6f",
+    "#8c6d31",
+    "#4f8a8b",
+    "#7a5195",
+    "#b08d57",
+    "#2f6f9f",
+    "#d46b35",
+]
+ARCHITECTURE_FALLBACK_COLORS = [
+    "#5c82b8",
+    "#9c6b5f",
+    "#4c8c6b",
+    "#8a63a8",
+]
+
+TEXT_TYPE_SPLIT_ALIASES = {
+    "medical summaries": "Survey/progress report",
+    "progress reports": "Survey/progress report",
+    "nursing notes": "Nursing note",
+    "treatment plans": "Nursing note",
+    "histology reports": "Histology/cytology/autopsy report",
+    "cytology reports": "Histology/cytology/autopsy report",
+    "autopsy reports": "Histology/cytology/autopsy report",
+}
+
+NETHERLANDS_PROVINCES = [
+    "Groningen",
+    "Friesland",
+    "Drenthe",
+    "Overijssel",
+    "Flevoland",
+    "Gelderland",
+    "Utrecht",
+    "North Holland",
+    "South Holland",
+    "Zeeland",
+    "North Brabant",
+    "Limburg",
+]
+
+BELGIUM_PROVINCES = [
+    "West Flanders",
+    "East Flanders",
+    "Antwerp",
+    "Flemish Brabant",
+    "Limburg",
+    "Hainaut",
+    "Walloon Brabant",
+    "Namur",
+    "Liège",
+    "Luxembourg",
+]
+
+REGION_TO_PROVINCE_ALIASES = {
+    "north holland": "North Holland",
+    "south holland": "South Holland",
+    "utrecht": "Utrecht",
+    "groningen": "Groningen",
+    "gelderland": "Gelderland",
+    "north brabant": "North Brabant",
+    "overijssel": "Overijssel",
+    "friesland": "Friesland",
+    "drenthe": "Drenthe",
+    "flevoland": "Flevoland",
+    "limburg": "Limburg",
+    "zeeland": "Zeeland",
+    "antwerp": "Antwerp",
+    "east flanders": "East Flanders",
+    "west flanders": "West Flanders",
+    "flemish brabant": "Flemish Brabant",
+    "walloon brabant": "Walloon Brabant",
+    "hainaut": "Hainaut",
+    "namur": "Namur",
+    "liège": "Liège",
+    "liege": "Liège",
+    "luxembourg": "Luxembourg",
+}
 
 PRETRAINED_TRANSFORMER_CATEGORY = "Fine-Tuned/Pre-Trained Transformers"
 PROMPTED_LLM_CATEGORIES = {
@@ -90,18 +194,63 @@ _PROMPTED_LLM_BASE_PATTERNS = [
 ]
 
 
+def _json_safe_scalar(value):
+    if pd.isna(value):
+        return ""
+    if isinstance(value, pd.Timestamp):
+        return str(value)
+    return value
+
+
+def _canonical_architecture_label(label: str) -> str:
+    label = str(label).strip()
+    return ARCHITECTURE_COLOR_ALIASES.get(label, label)
+
+
+def _architecture_color_map(labels: list[str]) -> dict[str, str]:
+    labels = [str(label).strip() for label in labels if str(label).strip()]
+    if not labels:
+        return {}
+
+    known_map = {
+        category: color
+        for category, color in zip(ARCHITECTURE_COLOR_ORDER, ARCHITECTURE_COLOR_SEQUENCE, strict=False)
+    }
+    extra_map: dict[str, str] = {}
+    extra_index = 0
+    ordered_labels = []
+    for label in labels:
+        canonical = _canonical_architecture_label(label)
+        if canonical not in ordered_labels:
+            ordered_labels.append(canonical)
+
+    for canonical in ordered_labels:
+        if canonical in known_map or canonical in extra_map:
+            continue
+        extra_map[canonical] = ARCHITECTURE_FALLBACK_COLORS[
+            extra_index % len(ARCHITECTURE_FALLBACK_COLORS)
+        ]
+        extra_index += 1
+
+    color_map = {**known_map, **extra_map}
+    return {
+        label: color_map.get(_canonical_architecture_label(label), "#8ba6c6")
+        for label in labels
+    }
+
+
 def _setup_publication_style() -> None:
     import matplotlib as mpl
 
     mpl.rcParams.update({
         "font.family": "DejaVu Sans",
-        "font.size": 8.5,
-        "axes.titlesize": 9,
-        "axes.labelsize": 8.5,
-        "xtick.labelsize": 7.5,
-        "ytick.labelsize": 7.5,
-        "legend.fontsize": 7.5,
-        "legend.title_fontsize": 8,
+        "font.size": 11.0,
+        "axes.titlesize": 12.0,
+        "axes.labelsize": 10.5,
+        "xtick.labelsize": 9.5,
+        "ytick.labelsize": 9.5,
+        "legend.fontsize": 9.5,
+        "legend.title_fontsize": 9.5,
         "axes.linewidth": 0.8,
         "grid.linewidth": 0.5,
         "lines.linewidth": 1.0,
@@ -153,19 +302,28 @@ def process_excel_with_mappings(
         else:
             mapping = {}
 
+        mapping_was_normalized = False
+        if col == "Ev metrics":
+            normalized_mapping = {}
+            for raw_value, mapped_value in mapping.items():
+                normalized = _normalize_ev_metrics_value(raw_value)
+                normalized_mapping[raw_value] = normalized or mapped_value
+                if normalized and normalized != mapped_value:
+                    mapping_was_normalized = True
+            mapping = normalized_mapping
+
         # Extract unique string values in column (excluding NaN)
         values = df[col].dropna().unique()
         string_values = [v for v in values if isinstance(v, str)]
 
-        # Add missing values to mapping (identity mapping)
+        # Append only: preserve all existing mappings and add any new raw values.
         updated = False
         for v in string_values:
             if v not in mapping:
-                mapping[v] = v
+                mapping[v] = _normalize_ev_metrics_value(v) if col == "Ev metrics" else v
                 updated = True
 
-        # Save mapping only if new entries were added or file didn't exist
-        if updated or not os.path.exists(json_path):
+        if updated or not os.path.exists(json_path) or mapping_was_normalized:
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(mapping, f, ensure_ascii=False, indent=2)
 
@@ -202,6 +360,152 @@ def _extract_first_number(value: str) -> float | None:
 def _contains_any(value: str, terms: list[str]) -> bool:
     value = str(value).lower()
     return any(re.search(rf"\b{re.escape(term)}\b", value) for term in terms)
+
+
+def _normalize_ev_metrics_value(value: object) -> str:
+    text = _normalize_model_text(value)
+    if not text:
+        return ""
+
+    normalized = re.sub(r"[–—−]", "-", text.lower())
+
+    categories: list[str] = []
+
+    def add(label: str) -> None:
+        if label not in categories:
+            categories.append(label)
+
+    if re.search(r"\bmacro\s+precision\b", normalized):
+        add("Macro precision")
+    if re.search(r"\bmacro\s+recall\b", normalized):
+        add("Macro recall")
+
+    matched_f1_variant = False
+    if re.search(r"\b(micro[- ]averaged|micro)\s+(f1|f-score|f measure|f-measure)\b", normalized) or "micro-f1" in normalized:
+        add("Micro F1 score")
+        matched_f1_variant = True
+    if re.search(r"\b(macro[- ]averaged|macro)\s+(f1|f-score|f measure|f-measure)\b", normalized) or "macro-f1" in normalized:
+        add("Macro F1 score")
+        matched_f1_variant = True
+    if re.search(r"\b(weighted|weighted-)\s+(f1|f-score|f measure|f-measure)\b", normalized) or "weighted-f1" in normalized:
+        add("Weighted F1 score")
+        matched_f1_variant = True
+    if not matched_f1_variant and re.search(r"\b(f1|f-score|f measure|f-measure)\b", normalized):
+        add("F1 score")
+
+    if (
+        "macro precision" not in normalized
+        and ("precision" in normalized or "positive predictive value" in normalized or re.search(r"\bppv\b", normalized))
+    ):
+        add("Precision/PPV")
+    if (
+        "macro recall" not in normalized
+        and ("recall" in normalized or "sensitivity" in normalized or re.search(r"\bsens\b", normalized))
+    ):
+        add("Recall/Sensitivity")
+    if "specificity" in normalized or re.search(r"\bspec\b", normalized):
+        add("Specificity")
+    if re.search(r"\bnpv\b", normalized) or "negative predictive value" in normalized:
+        add("NPV")
+    if "balanced accuracy" in normalized:
+        add("Balanced accuracy")
+    if re.search(r"(?<!balanced )\baccuracy\b", normalized):
+        add("Accuracy")
+
+    if "auc" in normalized or "auroc" in normalized or "area under the roc" in normalized:
+        add("AUROC")
+    if "auprc" in normalized or "auprcr" in normalized or "aupcr" in normalized:
+        add("AUPRC")
+
+    if "gwet ac1" in normalized:
+        add("Gwet AC1")
+    if "kappa" in normalized:
+        add("Cohen's Kappa")
+    if "percentage agreement" in normalized:
+        add("Percentage agreement")
+
+    if "bleu" in normalized:
+        add("BLEU")
+    if "rouge-1" in normalized or "rouge 1" in normalized:
+        add("ROUGE-1")
+    if "rouge-l" in normalized or "rouge l" in normalized:
+        add("ROUGE-L")
+    if "rouge" in normalized:
+        add("ROUGE")
+    if "bertscore" in normalized:
+        add("BERTScore")
+
+    if "perplexity" in normalized:
+        add("Perplexity")
+    if re.search(r"\bmae\b", normalized):
+        add("MAE")
+    if re.search(r"\bmse\b", normalized):
+        add("MSE")
+    if re.search(r"\brmse\b", normalized):
+        add("RMSE")
+    if "rsmape" in normalized:
+        add("RSMAPE")
+
+    if "pdqi-9" in normalized:
+        add("PDQI-9")
+    if "usability" in normalized:
+        add("Usability")
+    if "completeness" in normalized:
+        add("Completeness")
+    if "correctness" in normalized:
+        add("Correctness")
+    if "conciseness" in normalized or "conciceness" in normalized:
+        add("Conciseness")
+    if "trustworthiness" in normalized:
+        add("Trustworthiness")
+    if re.search(r"\btrust\b", normalized):
+        add("Trust")
+    if "overall preference" in normalized:
+        add("Overall preference")
+    elif re.search(r"\bpreference\b", normalized):
+        add("Preference")
+    if "coherence" in normalized:
+        add("Coherence")
+    if "relevance" in normalized:
+        add("Relevance")
+    if "omissions" in normalized:
+        add("Omissions")
+    if "trivial facts" in normalized:
+        add("Trivial facts")
+    if "hallucinations" in normalized:
+        add("Hallucinations")
+    if "additions" in normalized:
+        add("Additions")
+    if "date disagreements" in normalized:
+        add("Date disagreements")
+    if "error in hazard ratio" in normalized:
+        add("Error in hazard ratio")
+    if "error in median progression-free survival" in normalized:
+        add("Error in median progression-free survival")
+    if "visual comparison kaplan meier curves" in normalized:
+        add("Visual comparison Kaplan Meier curves")
+    if "average review time" in normalized:
+        add("Average review time")
+    if "adoption rate" in normalized:
+        add("Adoption rate")
+    if "usefulness" in normalized:
+        add("Usefulness")
+    if "factual correctness" in normalized:
+        add("Factual correctness")
+    if "well-being" in normalized:
+        add("Well-being")
+    if "clinical efficiency" in normalized:
+        add("Clinical efficiency")
+    if any(term in normalized for term in ["runtime", "cpu peak", "gpu peak", "time spent", "words adjusted", "word count drafted vs sent"]):
+        add("Runtime/efficiency")
+    if "clinical utility" in normalized:
+        add("Clinical utility")
+    if any(term in normalized for term in ["symmetric similarity", "cosine similarity", "similarity"]):
+        add("Similarity")
+
+    if not categories:
+        return text
+    return ", ".join(categories)
 
 
 def _normalize_model_text(value: object) -> str:
@@ -405,6 +709,7 @@ def _plot_combined_eval_size_histogram(
     xlabel: str,
 ) -> None:
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
 
     _setup_publication_style()
 
@@ -412,8 +717,24 @@ def _plot_combined_eval_size_histogram(
     text_values = unique_parsed.loc[unique_parsed["unit"] == "texts", "sample size"].dropna()
     patient_values = unique_parsed.loc[unique_parsed["unit"] == "patients", "sample size"].dropna()
     combined_values = unique_parsed["sample size"].dropna()
+    text_studies = (
+        unique_parsed.loc[unique_parsed["unit"] == "texts", "Title"]
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+    )
+    patient_studies = (
+        unique_parsed.loc[unique_parsed["unit"] == "patients", "Title"]
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+    )
 
-    fig, ax = plt.subplots(figsize=(PUB_DOUBLE_COL_WIDTH, 4.6))
+    fig, ax = plt.subplots(figsize=(PUB_SAMPLE_PLOT_WIDTH, 4.6))
     if combined_values.empty:
         ax.text(0.5, 0.5, "No parsed evaluation sample sizes.", ha="center")
         ax.set_axis_off()
@@ -423,11 +744,11 @@ def _plot_combined_eval_size_histogram(
             ax.hist(
                 text_values,
                 bins=bins,
-                color="#2f6f9f",
+                color=PLOT_DEV_COLOR,
                 alpha=0.55,
                 edgecolor="white",
                 label=(
-                    f"Texts (studies={text_values.index.nunique()}, "
+                    f"Texts (studies={text_studies}, "
                     f"median={text_values.median():.0f})"
                 ),
             )
@@ -435,20 +756,21 @@ def _plot_combined_eval_size_histogram(
             ax.hist(
                 patient_values,
                 bins=bins,
-                color="#d46b35",
+                color=PLOT_EVAL_COLOR,
                 alpha=0.50,
                 edgecolor="white",
                 label=(
-                    f"Patients (studies={patient_values.index.nunique()}, "
+                    f"Patients (studies={patient_studies}, "
                     f"median={patient_values.median():.0f})"
                 ),
             )
         ax.set_xscale("log")
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Number of studies")
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
         ax.set_title(title)
         ax.grid(axis="y", alpha=0.25)
-        ax.legend(frameon=False, fontsize=7.5)
+        ax.legend(frameon=False, fontsize=9.0)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
@@ -464,10 +786,10 @@ def plot_eval_sample_size_distributions(
 
     Writes:
       - ``parsed_eval_sample_sizes.csv``
-      - ``eval_sample_size_distribution_combined.png``
-      - ``eval_sample_size_distribution_combined_<usage>.png``
-      - ``eval_sample_size_distribution_texts.png``
-      - ``eval_sample_size_distribution_patients.png``
+      - ``eval_sample_size_distribution_combined.pdf``
+      - ``eval_sample_size_distribution_combined_<usage>.pdf``
+      - ``eval_sample_size_distribution_texts.pdf``
+      - ``eval_sample_size_distribution_patients.pdf``
 
     Returns the parsed long dataframe used for plotting.
     """
@@ -483,11 +805,12 @@ def plot_eval_sample_size_distributions(
         str(Path(".matplotlib_cache").resolve()),
     )
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
     _setup_publication_style()
 
     _plot_combined_eval_size_histogram(
         parsed,
-        output_dir_path / "eval_sample_size_distribution_combined.png",
+        output_dir_path / "eval_sample_size_distribution_combined.pdf",
         "Distribution of evaluation sample sizes",
         "Evaluation sample size (log scale)",
     )
@@ -498,7 +821,7 @@ def plot_eval_sample_size_distributions(
             safe_category = safe_category.strip("_") or "unknown"
             _plot_combined_eval_size_histogram(
                 usage_df,
-                output_dir_path / f"eval_sample_size_distribution_combined_{safe_category}.png",
+                output_dir_path / f"eval_sample_size_distribution_combined_{safe_category}.pdf",
                 f"Distribution of evaluation sample sizes: {usage_category}",
                 "Evaluation sample size (log scale)",
             )
@@ -510,26 +833,35 @@ def plot_eval_sample_size_distributions(
 
     for unit in ["texts", "patients"]:
         values = parsed.loc[parsed["unit"] == unit, "sample size"].dropna()
-        fig, ax = plt.subplots(figsize=(PUB_DOUBLE_COL_WIDTH, 4.6))
+        study_count = (
+            parsed.loc[parsed["unit"] == unit, "Title"]
+            .astype(str)
+            .str.strip()
+            .replace("", pd.NA)
+            .dropna()
+            .nunique()
+        )
+        fig, ax = plt.subplots(figsize=(PUB_SAMPLE_PLOT_WIDTH, 4.6))
 
         if values.empty:
             ax.text(0.5, 0.5, f"No parsed {unit} sample sizes.", ha="center")
             ax.set_axis_off()
         else:
             bins = _log_hist_bins(values)
-            ax.hist(values, bins=bins, color="#2f6f9f", alpha=0.78, edgecolor="white")
+            ax.hist(values, bins=bins, color=PLOT_DEV_COLOR, alpha=0.78, edgecolor="white")
             ax.set_xscale("log")
             ax.set_xlabel(f"Evaluation sample size ({unit}, log scale)")
             ax.set_ylabel("Number of studies")
+            ax.yaxis.set_major_locator(MaxNLocator(integer=True))
             ax.set_title(
                 f"Distribution of evaluation sample sizes in {unit} "
-                f"(studies={values.index.nunique()}, median={values.median():.0f})"
+                f"(studies={study_count}, median={values.median():.0f})"
             )
             ax.grid(axis="y", alpha=0.25)
 
         fig.tight_layout()
         fig.savefig(
-            output_dir_path / f"eval_sample_size_distribution_{unit}.png",
+            output_dir_path / f"eval_sample_size_distribution_{unit}.pdf",
             dpi=PUB_DPI,
             bbox_inches="tight",
         )
@@ -541,7 +873,7 @@ def plot_eval_sample_size_distributions(
 def plot_eval_sample_size_panels_by_usage_category(
     parsed: pd.DataFrame,
     output_dir: str = "eval_sample_size_distributions",
-    output_name: str = "eval_sample_size_distribution_panels_by_usage_category.png",
+    output_name: str = "eval_sample_size_distribution_panels_by_usage_category.pdf",
 ) -> Path:
     """
     Plot evaluation sample-size distributions in one panel per usage category.
@@ -566,12 +898,13 @@ def plot_eval_sample_size_panels_by_usage_category(
         str(Path(".matplotlib_cache").resolve()),
     )
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
 
     _setup_publication_style()
 
     usage_categories = sorted(unique_parsed["Usage category"].dropna().unique())
     if not usage_categories:
-        fig, ax = plt.subplots(figsize=(PUB_DOUBLE_COL_WIDTH, 3.6))
+        fig, ax = plt.subplots(figsize=(PUB_SAMPLE_PLOT_WIDTH, 3.6))
         ax.text(0.5, 0.5, "No usage categories available.", ha="center")
         ax.set_axis_off()
         fig.tight_layout()
@@ -586,7 +919,7 @@ def plot_eval_sample_size_panels_by_usage_category(
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(PUB_DOUBLE_COL_WIDTH, fig_height),
+        figsize=(PUB_SAMPLE_PLOT_WIDTH, fig_height),
         squeeze=False,
     )
 
@@ -611,7 +944,7 @@ def plot_eval_sample_size_panels_by_usage_category(
             bars = ax.hist(
                 text_values,
                 bins=bins,
-                color="#2f6f9f",
+                color=PLOT_DEV_COLOR,
                 alpha=0.55,
                 edgecolor="white",
                 label="Texts",
@@ -621,7 +954,7 @@ def plot_eval_sample_size_panels_by_usage_category(
             bars = ax.hist(
                 patient_values,
                 bins=bins,
-                color="#d46b35",
+                color=PLOT_EVAL_COLOR,
                 alpha=0.50,
                 edgecolor="white",
                 label="Patients",
@@ -632,6 +965,7 @@ def plot_eval_sample_size_panels_by_usage_category(
         ax.set_title(usage_category)
         ax.set_xlabel("Evaluation sample size (log scale)")
         ax.set_ylabel("Number of studies")
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
         ax.grid(axis="y", alpha=0.25)
 
     fig.legend(
@@ -647,6 +981,1673 @@ def plot_eval_sample_size_panels_by_usage_category(
     fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
     plt.close(fig)
     return output_path
+
+
+def _study_text_type_counts(df: pd.DataFrame, column: str) -> pd.DataFrame:
+    required_columns = ["Title", column]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(
+            f"Missing expected columns: {missing_columns}. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    subset = df[required_columns].copy()
+    subset = subset.dropna(subset=["Title", column])
+    subset["study_id"] = subset["Title"].astype(str).str.strip()
+    subset["text_type"] = subset[column].astype(str).str.strip()
+    subset = subset[(subset["study_id"] != "") & (subset["text_type"] != "")]
+    if subset.empty:
+        return pd.DataFrame(columns=["text_type", "count", "percentage"])
+
+    exploded_rows = []
+    for _, row in subset.iterrows():
+        study_id = row["study_id"]
+        for text_type in str(row["text_type"]).split(","):
+            label = text_type.strip()
+            if label:
+                exploded_rows.append({"study_id": study_id, "text_type": label})
+
+    if not exploded_rows:
+        return pd.DataFrame(columns=["text_type", "count", "percentage"])
+
+    exploded = pd.DataFrame(exploded_rows).drop_duplicates(["study_id", "text_type"])
+    total_studies = exploded["study_id"].nunique()
+    counts = (
+        exploded.groupby("text_type", as_index=False)
+        .agg(count=("study_id", "nunique"))
+        .sort_values(["count", "text_type"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+    counts["percentage"] = counts["count"] / total_studies * 100.0 if total_studies else 0.0
+    counts.attrs["total_studies"] = int(total_studies)
+    return counts
+
+
+def _study_text_type_counts_any(df: pd.DataFrame) -> pd.DataFrame:
+    required_columns = ["Title", "Dev text type", "Ev text type"]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(
+            f"Missing expected columns: {missing_columns}. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    subset = df[required_columns].copy()
+    subset = subset.dropna(subset=["Title"])
+    subset["study_id"] = subset["Title"].astype(str).str.strip()
+    subset = subset[subset["study_id"] != ""]
+    if subset.empty:
+        return pd.DataFrame(columns=["text_type", "count", "percentage"])
+
+    exploded_rows = []
+    for _, row in subset.iterrows():
+        study_id = row["study_id"]
+        for column in ("Dev text type", "Ev text type"):
+            value = row.get(column, "")
+            if pd.isna(value):
+                continue
+            for text_type in str(value).split(","):
+                label = text_type.strip()
+                if label:
+                    exploded_rows.append({"study_id": study_id, "text_type": label})
+
+    if not exploded_rows:
+        return pd.DataFrame(columns=["text_type", "count", "percentage"])
+
+    exploded = pd.DataFrame(exploded_rows).drop_duplicates(["study_id", "text_type"])
+    total_studies = exploded["study_id"].nunique()
+    counts = (
+        exploded.groupby("text_type", as_index=False)
+        .agg(count=("study_id", "nunique"))
+        .sort_values(["count", "text_type"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+    counts["percentage"] = counts["count"] / total_studies * 100.0 if total_studies else 0.0
+    counts.attrs["total_studies"] = int(total_studies)
+    return counts
+
+
+def _plot_text_type_study_count_bars(
+    counts_df: pd.DataFrame,
+    output_path: Path,
+    title: str,
+    color: str,
+) -> None:
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
+
+    _setup_publication_style()
+
+    total_studies = int(counts_df.attrs.get("total_studies", 0))
+    if counts_df.empty:
+        fig, ax = plt.subplots(figsize=(PUB_DOUBLE_COL_WIDTH, 3.8))
+        ax.text(0.5, 0.5, "No data available for this plot.", ha="center")
+        ax.set_axis_off()
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
+        plt.close(fig)
+        return
+
+    wrapped_labels = [
+        textwrap.fill(str(label), width=34, break_long_words=False)
+        for label in counts_df["text_type"].tolist()
+    ]
+    counts = counts_df["count"].astype(float).to_numpy()
+    percentages = counts_df["percentage"].astype(float).to_numpy()
+
+    fig_height = max(4.0, 0.34 * len(counts_df) + 1.4)
+    fig, ax = plt.subplots(figsize=(PUB_DOUBLE_COL_WIDTH, fig_height))
+    y_positions = list(range(len(counts_df)))
+    ax.barh(y_positions, counts, color=color, alpha=0.86, edgecolor="white")
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels(wrapped_labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("Number of unique studies")
+    ax.set_title(title)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.grid(axis="x", alpha=0.25)
+
+    xmax = max(counts) if len(counts) else 0
+    ax.set_xlim(0, xmax * 1.18 if xmax else 1)
+    for y, count, pct in zip(y_positions, counts, percentages, strict=False):
+        ax.text(
+            count + (xmax * 0.02 if xmax else 0.05),
+            y,
+            f"{int(count)} ({pct:.1f}%)",
+            va="center",
+            ha="left",
+            fontsize=9.0,
+        )
+
+    ax.text(
+        1.0,
+        -0.08,
+        f"Unique studies: {total_studies}",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=9.0,
+        color=PLOT_TEXT_LIGHT,
+    )
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_text_type_study_distributions(
+    df: pd.DataFrame,
+    output_dir: str = "text_type_study_distributions",
+) -> dict[str, Path]:
+    """
+    Plot study counts by text type for development and evaluation.
+
+    Each study is counted once per text-type label, so a study can contribute
+    to multiple text types when it uses multiple kinds of text.
+    """
+
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+
+    os.environ.setdefault(
+        "MPLCONFIGDIR",
+        str(Path(".matplotlib_cache").resolve()),
+    )
+    _setup_publication_style()
+
+    outputs: dict[str, Path] = {}
+    panels = []
+    specs = [
+        ("Dev text type", "Development", PLOT_DEV_COLOR),
+        ("Ev text type", "Evaluation", PLOT_EVAL_COLOR),
+    ]
+    for column, label, color in specs:
+        counts = _study_text_type_counts(df, column)
+        counts.to_csv(output_dir_path / f"{column.replace(' ', '_').lower()}_study_counts.csv", index=False)
+        panel_path = output_dir_path / f"{column.replace(' ', '_').lower()}_study_counts.pdf"
+        _plot_text_type_study_count_bars(
+            counts,
+            panel_path,
+            f"{label} text types by unique studies",
+            color,
+        )
+        outputs[f"{column}_pdf"] = panel_path
+        panels.append((label, counts, color))
+
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
+
+    max_len = max((len(counts) for _, counts, _ in panels), default=0)
+    fig_height = max(5.2, 0.34 * max_len + 1.8)
+    fig, axes = plt.subplots(
+        1,
+        len(panels),
+        figsize=(PUB_DOUBLE_COL_WIDTH, fig_height),
+        squeeze=False,
+    )
+    for ax, (label, counts, color) in zip(axes.flat, panels, strict=False):
+        if counts.empty:
+            ax.text(0.5, 0.5, f"No {label.lower()} text types available.", ha="center")
+            ax.set_axis_off()
+            continue
+        wrapped_labels = [
+            textwrap.fill(str(v), width=34, break_long_words=False)
+            for v in counts["text_type"].tolist()
+        ]
+        values = counts["count"].astype(float).to_numpy()
+        percentages = counts["percentage"].astype(float).to_numpy()
+        y_positions = list(range(len(counts)))
+        ax.barh(y_positions, values, color=color, alpha=0.86, edgecolor="white")
+        ax.set_yticks(y_positions)
+        ax.set_yticklabels(wrapped_labels)
+        ax.invert_yaxis()
+        ax.set_xlabel("Number of unique studies")
+        ax.set_title(f"{label} [n={int(counts.attrs.get('total_studies', 0))}]")
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.grid(axis="x", alpha=0.25)
+        xmax = max(values) if len(values) else 0
+        ax.set_xlim(0, xmax * 1.18 if xmax else 1)
+        for y, count, pct in zip(y_positions, values, percentages, strict=False):
+            ax.text(
+                count + (xmax * 0.02 if xmax else 0.05),
+                y,
+                f"{int(count)} ({pct:.1f}%)",
+                va="center",
+                ha="left",
+                fontsize=9.0,
+            )
+
+    fig.suptitle("Study counts by text type", y=0.995)
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    combined_path = output_dir_path / "text_type_study_counts_by_dev_ev.pdf"
+    fig.savefig(combined_path, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(fig)
+    outputs["combined_pdf"] = combined_path
+
+    any_counts = _study_text_type_counts_any(df)
+    any_counts.to_csv(output_dir_path / "text_type_study_counts_any_dev_or_ev.csv", index=False)
+    any_path = output_dir_path / "text_type_study_counts_any_dev_or_ev.pdf"
+    _plot_text_type_study_count_bars(
+        any_counts,
+        any_path,
+        "Text types used in development or evaluation",
+        PLOT_NEUTRAL_COLOR,
+    )
+    outputs["any_pdf"] = any_path
+    outputs["any_csv"] = output_dir_path / "text_type_study_counts_any_dev_or_ev.csv"
+
+    panel_counts = [
+        ("Development", _study_text_type_counts(df, "Dev text type"), PLOT_DEV_COLOR),
+        ("Evaluation", _study_text_type_counts(df, "Ev text type"), PLOT_EVAL_COLOR),
+        ("Any dev or eval", any_counts, PLOT_NEUTRAL_COLOR),
+    ]
+    max_len = max((len(counts) for _, counts, _ in panel_counts), default=0)
+    panel_fig_height = max(5.4, 0.34 * max_len + 1.8)
+    panel_fig, panel_axes = plt.subplots(
+        1,
+        len(panel_counts),
+        figsize=(PUB_DOUBLE_COL_WIDTH * 1.52, panel_fig_height),
+        squeeze=False,
+    )
+    for ax, (label, counts, color) in zip(panel_axes.flat, panel_counts, strict=False):
+        if counts.empty:
+            ax.text(0.5, 0.5, f"No {label.lower()} text types available.", ha="center")
+            ax.set_axis_off()
+            continue
+        wrapped_labels = [
+            textwrap.fill(str(v), width=34, break_long_words=False)
+            for v in counts["text_type"].tolist()
+        ]
+        values = counts["count"].astype(float).to_numpy()
+        percentages = counts["percentage"].astype(float).to_numpy()
+        y_positions = list(range(len(counts)))
+        ax.barh(y_positions, values, color=color, alpha=0.86, edgecolor="white")
+        ax.set_yticks(y_positions)
+        ax.set_yticklabels(wrapped_labels)
+        ax.invert_yaxis()
+        ax.set_xlabel("Number of unique studies")
+        ax.set_title(f"{label} [n={int(counts.attrs.get('total_studies', 0))}]")
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.grid(axis="x", alpha=0.25)
+        xmax = max(values) if len(values) else 0
+        ax.set_xlim(0, xmax * 1.18 if xmax else 1)
+        for y, count, pct in zip(y_positions, values, percentages, strict=False):
+            ax.text(
+                count + (xmax * 0.02 if xmax else 0.05),
+                y,
+                f"{int(count)} ({pct:.1f}%)",
+                va="center",
+                ha="left",
+                fontsize=9.0,
+            )
+    panel_fig.suptitle("Study counts by text type", y=0.995)
+    panel_fig.tight_layout(rect=(0, 0, 1, 0.98))
+    panel_path = output_dir_path / "text_type_study_counts_panel.pdf"
+    panel_fig.savefig(panel_path, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(panel_fig)
+    outputs["panel_pdf"] = panel_path
+
+    return outputs
+
+
+def plot_any_dev_eval_text_region_panel(
+    df: pd.DataFrame,
+    output_dir: str = "text_type_study_distributions",
+) -> Path:
+    """
+    Plot the combined "any dev or eval" text-type distribution next to the
+    combined "any dev or eval" province map.
+    """
+
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+
+    os.environ.setdefault(
+        "MPLCONFIGDIR",
+        str(Path(".matplotlib_cache").resolve()),
+    )
+    import cartopy
+    import cartopy.crs as ccrs
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+    from matplotlib.gridspec import GridSpec
+    from matplotlib.ticker import MaxNLocator
+
+    cartopy.config["data_dir"] = str(Path(".cartopy_cache").resolve())
+    Path(cartopy.config["data_dir"]).mkdir(parents=True, exist_ok=True)
+
+    _setup_publication_style()
+
+    any_counts = _study_text_type_counts_any(df)
+    province_counts = _study_province_counts_any(df)
+    province_cmap = LinearSegmentedColormap.from_list(
+        "province_blue_tint",
+        ["#f4f8fc", "#d8e7f2", "#b1cde2", "#7fa8ca", PLOT_DEV_COLOR],
+    )
+    vmax = int(province_counts["count"].max() if not province_counts.empty else 0)
+
+    fig = plt.figure(figsize=(PUB_DOUBLE_COL_WIDTH * 1.75, 6.2))
+    gs = GridSpec(
+        1,
+        2,
+        figure=fig,
+        width_ratios=[1.0, 1.35],
+        wspace=0.10,
+    )
+    ax_text = fig.add_subplot(gs[0, 0])
+    ax_map = fig.add_subplot(gs[0, 1], projection=ccrs.PlateCarree())
+
+    if any_counts.empty:
+        ax_text.text(0.5, 0.5, "No text types available.", ha="center")
+        ax_text.set_axis_off()
+    else:
+        wrapped_labels = [
+            textwrap.fill(str(v), width=34, break_long_words=False)
+            for v in any_counts["text_type"].tolist()
+        ]
+        values = any_counts["count"].astype(float).to_numpy()
+        percentages = any_counts["percentage"].astype(float).to_numpy()
+        y_positions = list(range(len(any_counts)))
+        ax_text.barh(
+            y_positions,
+            values,
+            color=PLOT_NEUTRAL_COLOR,
+            alpha=0.86,
+            edgecolor="white",
+        )
+        ax_text.set_yticks(y_positions)
+        ax_text.set_yticklabels(wrapped_labels)
+        ax_text.invert_yaxis()
+        ax_text.set_xlabel("Number of unique studies")
+        ax_text.set_title(
+            f"Text types used in development or evaluation [n={int(any_counts.attrs.get('total_studies', 0))}]"
+        )
+        ax_text.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax_text.grid(axis="x", alpha=0.25)
+        xmax = max(values) if len(values) else 0
+        ax_text.set_xlim(0, xmax * 1.18 if xmax else 1)
+        for y, count, pct in zip(y_positions, values, percentages, strict=False):
+            ax_text.text(
+                count + (xmax * 0.02 if xmax else 0.05),
+                y,
+                f"{int(count)} ({pct:.1f}%)",
+                va="center",
+                ha="left",
+                fontsize=9.0,
+            )
+
+    ax_map.set_facecolor(PLOT_PANEL_BG_COLOR)
+    _plot_combined_province_map(
+        ax_map,
+        province_counts,
+        f"Study counts by province [n={province_counts.attrs.get('total_studies', 0)}]",
+        province_cmap,
+        vmax,
+    )
+
+    sm = plt.cm.ScalarMappable(cmap=province_cmap, norm=Normalize(vmin=0, vmax=max(vmax, 1)))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=[ax_text, ax_map], fraction=0.03, pad=0.02)
+    cbar.set_label("Number of unique studies")
+    fig.suptitle(
+        "Studies using text types and regions in either development or evaluation\n"
+        "Comma-separated labels are split before counting; nationwide/unassigned region labels are excluded from province allocation.",
+        y=0.995,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    output_path = output_dir_path / "any_dev_or_eval_text_region_panel.pdf"
+    fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def _study_metric_counts_by_usage_category(
+    df: pd.DataFrame,
+    metric_column: str = "Ev metrics",
+) -> pd.DataFrame:
+    required_columns = ["Title", "Usage category", metric_column]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(
+            f"Missing expected columns: {missing_columns}. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    subset = df[required_columns].copy()
+    subset = subset.dropna(subset=["Title", "Usage category", metric_column])
+    subset["study_id"] = subset["Title"].astype(str).str.strip()
+    subset["usage_category"] = subset["Usage category"].astype(str).str.strip()
+    subset["metric"] = subset[metric_column].astype(str).str.strip()
+    subset = subset[
+        (subset["study_id"] != "")
+        & (subset["usage_category"] != "")
+        & (subset["metric"] != "")
+    ]
+    if subset.empty:
+        return pd.DataFrame(columns=["Usage category", "metric", "count", "percentage"])
+
+    exploded_rows = []
+    for _, row in subset.iterrows():
+        study_id = row["study_id"]
+        usage_category = row["usage_category"]
+        for metric in str(row["metric"]).split(","):
+            label = metric.strip()
+            if label:
+                exploded_rows.append(
+                    {
+                        "study_id": study_id,
+                        "Usage category": usage_category,
+                        "metric": label,
+                    }
+                )
+
+    if not exploded_rows:
+        return pd.DataFrame(columns=["Usage category", "metric", "count", "percentage"])
+
+    exploded = pd.DataFrame(exploded_rows).drop_duplicates(
+        ["study_id", "Usage category", "metric"]
+    )
+    usage_totals = (
+        exploded.groupby("Usage category", as_index=False)
+        .agg(total_studies=("study_id", "nunique"))
+    )
+    counts = (
+        exploded.groupby(["Usage category", "metric"], as_index=False)
+        .agg(count=("study_id", "nunique"))
+        .merge(usage_totals, on="Usage category", how="left")
+        .sort_values(["Usage category", "count", "metric"], ascending=[True, False, True])
+        .reset_index(drop=True)
+    )
+    counts["percentage"] = counts["count"] / counts["total_studies"] * 100.0
+    counts.attrs["total_studies"] = int(exploded["study_id"].nunique())
+    return counts
+
+
+def plot_ev_metric_overview_by_usage_category(
+    df: pd.DataFrame,
+    output_dir: str = "ev_metric_overview",
+    top_n_metrics: int = 16,
+) -> dict[str, Path]:
+    """
+    Plot an overview of evaluation metrics by usage category.
+
+    The plot uses the normalized ``Ev metrics`` values, splits comma-separated
+    multi-metric cells, and counts each study once per metric/usage category.
+    """
+
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+
+    os.environ.setdefault(
+        "MPLCONFIGDIR",
+        str(Path(".matplotlib_cache").resolve()),
+    )
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+
+    _setup_publication_style()
+
+    counts = _study_metric_counts_by_usage_category(df, "Ev metrics")
+    counts.to_csv(output_dir_path / "ev_metrics_by_usage_category_long.csv", index=False)
+
+    if counts.empty:
+        fig, ax = plt.subplots(figsize=(PUB_DOUBLE_COL_WIDTH, 3.8))
+        ax.text(0.5, 0.5, "No normalized evaluation metrics available.", ha="center")
+        ax.set_axis_off()
+        fig.tight_layout()
+        output_path = output_dir_path / "ev_metrics_by_usage_category_heatmap.pdf"
+        fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
+        plt.close(fig)
+        return {
+            "long_csv": output_dir_path / "ev_metrics_by_usage_category_long.csv",
+            "heatmap_pdf": output_path,
+        }
+
+    top_metrics = (
+        counts.groupby("metric", as_index=False)
+        .agg(total_count=("count", "sum"))
+        .sort_values(["total_count", "metric"], ascending=[False, True])
+        .head(top_n_metrics)["metric"]
+        .tolist()
+    )
+    usage_categories = sorted(counts["Usage category"].unique())
+    pivot = (
+        counts[counts["metric"].isin(top_metrics)]
+        .pivot(index="Usage category", columns="metric", values="count")
+        .reindex(index=usage_categories, columns=top_metrics)
+        .fillna(0)
+        .astype(int)
+    )
+    pivot.to_csv(output_dir_path / "ev_metrics_by_usage_category_top_counts.csv")
+
+    fig_width = max(PUB_DOUBLE_COL_WIDTH * 1.35, 1.15 * len(top_metrics) + 3.4)
+    fig_height = max(2.6, 0.72 * len(usage_categories) + 1.7)
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    cmap = LinearSegmentedColormap.from_list(
+        "metric_blue_tint",
+        ["#f4f8fc", "#d8e7f2", "#b1cde2", "#7fa8ca", PLOT_DEV_COLOR],
+    )
+    vmax = max(int(pivot.to_numpy().max()), 1)
+    norm = Normalize(vmin=0, vmax=vmax)
+    im = ax.imshow(pivot.to_numpy(), aspect="auto", cmap=cmap, norm=norm)
+
+    ax.set_xticks(range(len(top_metrics)))
+    ax.set_xticklabels([textwrap.fill(str(metric), width=16) for metric in top_metrics], rotation=35, ha="right")
+    ax.set_yticks(range(len(usage_categories)))
+    ax.set_yticklabels(usage_categories)
+    ax.set_title("Evaluation metrics used by usage category")
+    ax.set_xlabel("Metric")
+    ax.set_ylabel("Usage\ncategory")
+
+    for i, usage_category in enumerate(usage_categories):
+        for j, metric in enumerate(top_metrics):
+            value = int(pivot.loc[usage_category, metric])
+            if value == 0:
+                continue
+            ax.text(
+                j,
+                i,
+                str(value),
+                ha="center",
+                va="center",
+                fontsize=9.0,
+                color="white" if value >= vmax * 0.55 else PLOT_TEXT_DARK,
+                fontweight="bold",
+            )
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label("Unique studies")
+    fig.tight_layout()
+    heatmap_path = output_dir_path / "ev_metrics_by_usage_category_heatmap.pdf"
+    fig.savefig(heatmap_path, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(fig)
+
+    return {
+        "long_csv": output_dir_path / "ev_metrics_by_usage_category_long.csv",
+        "top_csv": output_dir_path / "ev_metrics_by_usage_category_top_counts.csv",
+        "heatmap_pdf": heatmap_path,
+    }
+
+
+def _draw_combined_eval_size_histogram_ax(ax, parsed: pd.DataFrame) -> None:
+    from matplotlib.ticker import MaxNLocator
+
+    unique_parsed = _unique_eval_sample_sizes_by_study(parsed)
+    text_values = unique_parsed.loc[unique_parsed["unit"] == "texts", "sample size"].dropna()
+    patient_values = unique_parsed.loc[unique_parsed["unit"] == "patients", "sample size"].dropna()
+    combined_values = unique_parsed["sample size"].dropna()
+    text_studies = (
+        unique_parsed.loc[unique_parsed["unit"] == "texts", "Title"]
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+    )
+    patient_studies = (
+        unique_parsed.loc[unique_parsed["unit"] == "patients", "Title"]
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+    )
+
+    if combined_values.empty:
+        ax.text(0.5, 0.5, "No parsed evaluation sample sizes.", ha="center")
+        ax.set_axis_off()
+        return
+
+    bins = _log_hist_bins(combined_values)
+    if not text_values.empty:
+        ax.hist(
+            text_values,
+            bins=bins,
+            color=PLOT_DEV_COLOR,
+            alpha=0.55,
+            edgecolor="white",
+            label=(
+                f"Texts (studies={text_studies}, "
+                f"median={text_values.median():.0f})"
+            ),
+        )
+    if not patient_values.empty:
+        ax.hist(
+            patient_values,
+            bins=bins,
+            color=PLOT_EVAL_COLOR,
+            alpha=0.50,
+            edgecolor="white",
+            label=(
+                f"Patients (studies={patient_studies}, "
+                f"median={patient_values.median():.0f})"
+            ),
+        )
+    ax.set_xscale("log")
+    ax.set_xlabel("Evaluation sample size (log scale)")
+    ax.set_ylabel("Number of studies")
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(frameon=False, fontsize=8.8)
+
+
+def _draw_ev_metric_heatmap_ax(
+    ax,
+    df: pd.DataFrame,
+    top_n_metrics: int = 16,
+):
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+
+    counts = _study_metric_counts_by_usage_category(df, "Ev metrics")
+    if counts.empty:
+        ax.text(0.5, 0.5, "No normalized evaluation metrics available.", ha="center")
+        ax.set_axis_off()
+        return None
+
+    top_metrics = (
+        counts.groupby("metric", as_index=False)
+        .agg(total_count=("count", "sum"))
+        .sort_values(["total_count", "metric"], ascending=[False, True])
+        .head(top_n_metrics)["metric"]
+        .tolist()
+    )
+    usage_categories = sorted(counts["Usage category"].unique())
+    pivot = (
+        counts[counts["metric"].isin(top_metrics)]
+        .pivot(index="Usage category", columns="metric", values="count")
+        .reindex(index=usage_categories, columns=top_metrics)
+        .fillna(0)
+        .astype(int)
+    )
+
+    cmap = LinearSegmentedColormap.from_list(
+        "metric_blue_tint",
+        ["#f4f8fc", "#d8e7f2", "#b1cde2", "#7fa8ca", PLOT_DEV_COLOR],
+    )
+    vmax = max(int(pivot.to_numpy().max()), 1)
+    norm = Normalize(vmin=0, vmax=vmax)
+    im = ax.imshow(pivot.to_numpy(), aspect="auto", cmap=cmap, norm=norm)
+
+    ax.set_xticks(range(len(top_metrics)))
+    ax.set_xticklabels([textwrap.fill(str(metric), width=16) for metric in top_metrics], rotation=35, ha="right")
+    ax.set_yticks(range(len(usage_categories)))
+    ax.set_yticklabels(usage_categories)
+    ax.set_title("Evaluation metrics by usage category")
+    ax.set_xlabel("Metric")
+    ax.set_ylabel("Usage category")
+
+    for i, usage_category in enumerate(usage_categories):
+        for j, metric in enumerate(top_metrics):
+            value = int(pivot.loc[usage_category, metric])
+            if value == 0:
+                continue
+            ax.text(
+                j,
+                i,
+                str(value),
+                ha="center",
+                va="center",
+                fontsize=8.5,
+                color="white" if value >= vmax * 0.55 else PLOT_TEXT_DARK,
+                fontweight="bold",
+            )
+    return im
+
+
+def _build_comparison_graph_for_usage_category(
+    pairwise_df: pd.DataFrame,
+    usage_category: str,
+    weight_mode: str = "study",
+    include_self_edges: bool = False,
+):
+    nodes, comparisons = _prepare_comparison_graph_rows(
+        pairwise_df,
+        "architecture",
+        include_self_edges=True,
+    )
+    comparisons = comparisons[comparisons["usage category 1"] == usage_category].copy()
+    if comparisons.empty:
+        return None, []
+
+    comparisons = comparisons[comparisons["metric value 1"] != comparisons["metric value 2"]].copy()
+    comparisons["winner"] = comparisons.apply(
+        lambda row: row["node 1"]
+        if row["metric value 1"] > row["metric value 2"]
+        else row["node 2"],
+        axis=1,
+    )
+    comparisons["loser"] = comparisons.apply(
+        lambda row: row["node 2"]
+        if row["metric value 1"] > row["metric value 2"]
+        else row["node 1"],
+        axis=1,
+    )
+    if not include_self_edges:
+        comparisons = comparisons[comparisons["winner"] != comparisons["loser"]].copy()
+
+    edge_records = []
+    for (winner, loser), edge_df in comparisons.groupby(["winner", "loser"], sort=True):
+        study_titles = set()
+        for row_dict in edge_df.to_dict(orient="records"):
+            for title_key in ("Title 1", "Title 2", "Title"):
+                study_title = _normalize_docx_text(row_dict.get(title_key, ""))
+                if study_title:
+                    study_titles.add(study_title)
+        comparison_weight = int(len(edge_df))
+        study_weight = int(len(study_titles)) if study_titles else comparison_weight
+        edge_records.append({
+            "source": winner,
+            "target": loser,
+            "comparison_weight": comparison_weight,
+            "study_weight": study_weight,
+            "weight": study_weight if weight_mode == "study" else comparison_weight,
+        })
+
+    ordered_nodes = _weighted_circular_node_order(
+        sorted(set(comparisons["node 1"].dropna()) | set(comparisons["node 2"].dropna())),
+        edge_records,
+    )
+    try:
+        import networkx as nx
+    except ImportError as exc:
+        raise ImportError(
+            "The comparison graph panel requires networkx. Install it with `pip install networkx`."
+        ) from exc
+
+    graph = nx.DiGraph()
+    graph.add_nodes_from(ordered_nodes)
+    for edge in edge_records:
+        graph.add_edge(edge["source"], edge["target"], **edge)
+    return graph, edge_records
+
+
+def _draw_comparison_graph_ax(
+    ax,
+    graph,
+    edge_weights: list[dict[str, object]],
+    title: str,
+    subtitle: str,
+    graph_scale: float = 1.65,
+    view_limit: float = 2.55,
+    node_size_scale: float = 1.0,
+    arrowhead_scale: float = 1.0,
+    labels_outside: bool = False,
+    label_offset: float = 0.22,
+) -> None:
+    import networkx as nx
+    from matplotlib.patches import FancyArrowPatch
+
+    if graph is None or graph.number_of_nodes() == 0:
+        ax.text(0.5, 0.5, "No comparison graph available.", ha="center", va="center")
+        ax.set_axis_off()
+        return
+
+    ordered_nodes = list(graph.nodes)
+    pos = {}
+    for idx, node in enumerate(ordered_nodes):
+        angle = -math.pi / 2 + (2 * math.pi * idx / max(1, len(ordered_nodes)))
+        pos[node] = (
+            math.cos(angle) * graph_scale,
+            math.sin(angle) * graph_scale,
+        )
+    node_sizes = [
+        (1940
+        + 240
+        * (
+            graph.in_degree(node, weight="weight")
+            + graph.out_degree(node, weight="weight")
+        ) ** 0.5
+        + max(0, len(str(node)) - 14) * 38
+        ) * node_size_scale
+        for node in graph.nodes
+    ]
+    label_bbox = {
+        "boxstyle": "round,pad=0.15",
+        "facecolor": "white",
+        "edgecolor": "none",
+        "alpha": 0.75,
+    }
+
+    def readable_rotation(angle: float) -> float:
+        if angle > 90:
+            return angle - 180
+        if angle < -90:
+            return angle + 180
+        return angle
+
+    def arc_label_geometry(start, end, rad: float, t: float) -> tuple[float, float, float]:
+        sx, sy = start
+        tx, ty = end
+        dx, dy = tx - sx, ty - sy
+        length = math.hypot(dx, dy) or 1.0
+        normal = (-dy / length, dx / length)
+        control = (
+            (sx + tx) / 2 + normal[0] * rad * length,
+            (sy + ty) / 2 + normal[1] * rad * length,
+        )
+        one_minus_t = 1 - t
+        label_x = (
+            one_minus_t ** 2 * sx
+            + 2 * one_minus_t * t * control[0]
+            + t ** 2 * tx
+        )
+        label_y = (
+            one_minus_t ** 2 * sy
+            + 2 * one_minus_t * t * control[1]
+            + t ** 2 * ty
+        )
+        tangent_x = (
+            2 * one_minus_t * (control[0] - sx)
+            + 2 * t * (tx - control[0])
+        )
+        tangent_y = (
+            2 * one_minus_t * (control[1] - sy)
+            + 2 * t * (ty - control[1])
+        )
+        angle = math.degrees(math.atan2(tangent_y, tangent_x))
+        return label_x, label_y, readable_rotation(angle)
+
+    weights = [int(data.get("weight", 0)) for _, _, data in graph.edges(data=True)]
+    min_log_weight = min((math.log1p(weight) for weight in weights), default=0)
+    max_log_weight = max((math.log1p(weight) for weight in weights), default=0)
+
+    def edge_strength(weight: int) -> float:
+        if max_log_weight == min_log_weight:
+            return 1.0
+        return (math.log1p(weight) - min_log_weight) / (max_log_weight - min_log_weight)
+
+    def edge_width(weight: int) -> float:
+        return 0.70 + 2.85 * edge_strength(weight)
+
+    def edge_alpha(weight: int) -> float:
+        return 0.18 + 0.72 * edge_strength(weight)
+
+    def trim_edge_to_node_boundaries(source, target, offset: float = 0.16):
+        sx, sy = pos[source]
+        tx, ty = pos[target]
+        dx, dy = tx - sx, ty - sy
+        length = math.hypot(dx, dy) or 1.0
+        unit_x, unit_y = dx / length, dy / length
+        return (
+            (sx + unit_x * offset, sy + unit_y * offset),
+            (tx - unit_x * offset, ty - unit_y * offset),
+        )
+
+    def draw_weighted_edge(source, target, weight: int) -> None:
+        alpha = edge_alpha(weight)
+        width = edge_width(weight)
+
+        if source == target:
+            x, y = pos[source]
+            norm = math.hypot(x, y) or 1.0
+            radial = (x / norm, y / norm)
+            tangent = (-radial[1], radial[0])
+            start = (
+                x + radial[0] * 0.17 + tangent[0] * 0.13,
+                y + radial[1] * 0.17 + tangent[1] * 0.13,
+            )
+            end = (
+                x + radial[0] * 0.17 - tangent[0] * 0.13,
+                y + radial[1] * 0.17 - tangent[1] * 0.13,
+            )
+            patch = FancyArrowPatch(
+                start,
+                end,
+                connectionstyle="arc3,rad=2.2",
+                arrowstyle="-|>",
+                mutation_scale=10 + 9 * edge_strength(weight),
+                linewidth=width,
+                color=PLOT_INK_COLOR,
+                alpha=alpha,
+                clip_on=False,
+                zorder=1,
+            )
+            ax.add_patch(patch)
+            label_x = x + radial[0] * 0.44
+            label_y = y + radial[1] * 0.44
+            label_angle = readable_rotation(
+                math.degrees(math.atan2(tangent[1], tangent[0]))
+            )
+            ax.text(
+                label_x,
+                label_y,
+                str(weight),
+                fontsize=8,
+                ha="center",
+                va="center",
+                rotation=label_angle,
+                rotation_mode="anchor",
+                bbox=label_bbox,
+                zorder=4,
+            )
+            return
+
+        rad = 0.22
+        start, end = trim_edge_to_node_boundaries(source, target)
+        patch = FancyArrowPatch(
+            start,
+            end,
+            connectionstyle=f"arc3,rad={rad}",
+            arrowstyle="-|>",
+            mutation_scale=10 + 9 * edge_strength(weight),
+            linewidth=width,
+            color=PLOT_INK_COLOR,
+            alpha=alpha,
+            shrinkA=0,
+            shrinkB=0,
+            clip_on=False,
+            zorder=1,
+        )
+        ax.add_patch(patch)
+
+        label_x, label_y, label_angle = arc_label_geometry(start, end, rad, t=0.78)
+        ax.text(
+            label_x,
+            label_y,
+            str(weight),
+            fontsize=8,
+            ha="center",
+            va="center",
+            rotation=label_angle,
+            rotation_mode="anchor",
+            bbox=label_bbox,
+            zorder=4,
+        )
+
+    for source, target, data in sorted(
+        graph.edges(data=True),
+        key=lambda item: (
+            int(item[2].get("weight", 0)),
+            str(item[0]),
+            str(item[1]),
+        ),
+    ):
+        draw_weighted_edge(source, target, int(data.get("weight", 0)))
+
+    nx.draw_networkx_nodes(
+        graph,
+        pos,
+        node_size=node_sizes,
+        node_color="#d9e9f5",
+        edgecolors="#234",
+        ax=ax,
+    )
+    for node in graph.nodes:
+        x, y = pos[node]
+        node_lines, font_size = _node_label_style(node, width=18)
+        if labels_outside:
+            norm = math.hypot(x, y) or 1.0
+            unit_x, unit_y = x / norm, y / norm
+            text_x = x + unit_x * label_offset
+            text_y = y + unit_y * label_offset
+            ha = "left" if unit_x >= 0 else "right"
+            va = "bottom" if unit_y >= 0 else "top"
+            ax.text(
+                text_x,
+                text_y,
+                "\n".join(node_lines),
+                fontsize=font_size,
+                fontweight="bold",
+                ha=ha,
+                va=va,
+                linespacing=0.90,
+                bbox=label_bbox,
+                zorder=5,
+            )
+        else:
+            ax.text(
+                x,
+                y,
+                "\n".join(node_lines),
+                fontsize=font_size,
+                fontweight="bold",
+                ha="center",
+                va="center",
+                linespacing=0.90,
+                zorder=5,
+            )
+    ax.set_axis_off()
+    ax.set_aspect("equal")
+    ax.set_xlim(-view_limit, view_limit)
+    ax.set_ylim(-(view_limit - 0.10), (view_limit - 0.10))
+
+
+def plot_metrics_eval_sizes_ie_panel(
+    df: pd.DataFrame,
+    pairwise_df: pd.DataFrame,
+    output_dir: str = "paper_panels",
+) -> dict[str, Path]:
+    """
+    Create a single publication-ready panel combining:
+      - combined evaluation sample sizes
+      - evaluation metric heatmap by usage category
+      - study-weighted information-extraction comparison graph
+    """
+
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+
+    os.environ.setdefault(
+        "MPLCONFIGDIR",
+        str(Path(".matplotlib_cache").resolve()),
+    )
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+
+    _setup_publication_style()
+
+    parsed = _unique_eval_sample_sizes_by_study(parse_eval_sample_sizes(df))
+    graph, edge_records = _build_comparison_graph_for_usage_category(
+        pairwise_df,
+        "Information extraction",
+        weight_mode="study",
+        include_self_edges=False,
+    )
+
+    fig = plt.figure(figsize=(PUB_DOUBLE_COL_WIDTH * 2.60, 9.8))
+    gs = GridSpec(
+        2,
+        2,
+        figure=fig,
+        height_ratios=[1.22, 0.78],
+        width_ratios=[1.12, 0.88],
+        hspace=0.26,
+        wspace=0.18,
+    )
+
+    ax_graph = fig.add_subplot(gs[0, 0])
+    ax_hist = fig.add_subplot(gs[0, 1])
+    ax_heat = fig.add_subplot(gs[1, :])
+
+    _draw_comparison_graph_ax(
+        ax_graph,
+        graph,
+        edge_records,
+        "",
+        "",
+        graph_scale=1.70,
+        view_limit=2.68,
+        node_size_scale=0.42,
+        arrowhead_scale=1.26,
+        labels_outside=True,
+        label_offset=0.21,
+    )
+
+    _draw_combined_eval_size_histogram_ax(ax_hist, parsed)
+    ax_hist.set_title("Evaluation sample sizes")
+
+    im = _draw_ev_metric_heatmap_ax(ax_heat, df)
+    if im is not None:
+        fig.colorbar(im, ax=ax_heat, fraction=0.046, pad=0.03, label="Unique studies")
+
+    fig.suptitle(
+        "Evaluation sizes, metrics, and study-weighted comparison graph",
+        y=0.995,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.975))
+    output_path = output_dir_path / "evaluation_metrics_sizes_ie_panel.pdf"
+    fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return {
+        "pdf": output_path,
+    }
+
+
+def _study_province_counts(df: pd.DataFrame, column: str) -> tuple[pd.DataFrame, int]:
+    required_columns = ["Title", column]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(
+            f"Missing expected columns: {missing_columns}. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    subset = df[required_columns].copy()
+    subset = subset.dropna(subset=["Title", column])
+    subset["study_id"] = subset["Title"].astype(str).str.strip()
+    subset["region"] = subset[column].astype(str).str.strip()
+    subset = subset[(subset["study_id"] != "") & (subset["region"] != "")]
+    if subset.empty:
+        return pd.DataFrame(columns=["province", "count", "percentage"]), 0
+
+    exploded_rows = []
+    national_like = {"netherlands", "not reported", "nr", "unassigned", "other"}
+    for _, row in subset.iterrows():
+        study_id = row["study_id"]
+        for token in str(row["region"]).split(","):
+            cleaned = token.strip()
+            if not cleaned:
+                continue
+            lowered = cleaned.lower()
+            province = REGION_TO_PROVINCE_ALIASES.get(lowered, cleaned)
+            if province.lower() in national_like:
+                continue
+            exploded_rows.append({"study_id": study_id, "province": province})
+
+    if not exploded_rows:
+        return pd.DataFrame(columns=["province", "count", "percentage"]), 0
+
+    exploded = pd.DataFrame(exploded_rows).drop_duplicates(["study_id", "province"])
+    total_mapped_studies = exploded["study_id"].nunique()
+    counts = (
+        exploded.groupby("province", as_index=False)
+        .agg(count=("study_id", "nunique"))
+        .sort_values(["count", "province"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+    counts["percentage"] = (
+        counts["count"] / total_mapped_studies * 100.0 if total_mapped_studies else 0.0
+    )
+    counts.attrs["total_mapped_studies"] = int(total_mapped_studies)
+    return counts, int(total_mapped_studies)
+
+
+def _study_province_counts_any(
+    df: pd.DataFrame,
+    columns: tuple[str, ...] = ("Dev region", "Ev region"),
+) -> pd.DataFrame:
+    required_columns = ["Title", "Dev region", "Ev region"]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(
+            f"Missing expected columns: {missing_columns}. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    subset = df[required_columns].copy()
+    subset = subset.dropna(subset=["Title"])
+    subset["study_id"] = subset["Title"].astype(str).str.strip()
+    subset = subset[subset["study_id"] != ""]
+    if subset.empty:
+        return pd.DataFrame(columns=["country", "province", "count", "percentage"])
+
+    def classify_token(token: str, context: str) -> tuple[str, str] | None:
+        token = str(token).strip()
+        if not token:
+            return None
+        lowered = token.lower()
+        if lowered in {"netherlands", "not reported", "nr"}:
+            return None
+        if token in {"North Holland", "South Holland", "Utrecht", "Groningen", "Gelderland", "North Brabant", "Overijssel", "Friesland", "Drenthe", "Flevoland", "Zeeland"}:
+            return ("NLD", token)
+        if token in {"Antwerp", "East Flanders", "West Flanders", "Flemish Brabant", "Walloon Brabant", "Hainaut", "Namur", "Liège", "Liege", "Luxembourg"}:
+            province = "Liège" if token == "Liege" else token
+            return ("BEL", province)
+        if token == "Limburg":
+            belgian_context = any(
+                marker in context.lower()
+                for marker in [
+                    "antwerp",
+                    "east flanders",
+                    "west flanders",
+                    "flemish brabant",
+                    "walloon brabant",
+                    "hainaut",
+                    "namur",
+                    "liège",
+                    "liege",
+                    "luxembourg",
+                    "belgium",
+                ]
+            )
+            return ("BEL", "Limburg") if belgian_context else ("NLD", "Limburg")
+        return None
+
+    exploded_rows = []
+    for _, row in subset.iterrows():
+        study_id = row["study_id"]
+        context = " ".join(
+            str(row.get(col, ""))
+            for col in columns
+            if col in row.index and pd.notna(row.get(col, ""))
+        )
+        seen_pairs = set()
+        for column in columns:
+            value = row.get(column, "")
+            if pd.isna(value):
+                continue
+            for token in str(value).split(","):
+                classified = classify_token(token.strip(), context)
+                if classified is None or classified in seen_pairs:
+                    continue
+                seen_pairs.add(classified)
+                country, province = classified
+                exploded_rows.append(
+                    {"study_id": study_id, "country": country, "province": province}
+                )
+
+    if not exploded_rows:
+        return pd.DataFrame(columns=["country", "province", "count", "percentage"])
+
+    exploded = pd.DataFrame(exploded_rows).drop_duplicates(["study_id", "country", "province"])
+    total_studies = exploded["study_id"].nunique()
+    counts = (
+        exploded.groupby(["country", "province"], as_index=False)
+        .agg(count=("study_id", "nunique"))
+        .sort_values(["country", "count", "province"], ascending=[True, False, True])
+        .reset_index(drop=True)
+    )
+    counts["percentage"] = counts["count"] / total_studies * 100.0 if total_studies else 0.0
+    counts.attrs["total_studies"] = int(total_studies)
+    return counts
+
+
+def _province_layout(country: str) -> dict[str, tuple[float, float, float, float]]:
+    if country == "Netherlands":
+        return {
+            "Groningen": (2.75, 0.10, 0.95, 0.65),
+            "Friesland": (1.70, 0.10, 1.05, 0.75),
+            "Drenthe": (2.00, 0.78, 0.95, 0.65),
+            "North Holland": (0.65, 1.10, 0.95, 1.05),
+            "Flevoland": (1.65, 1.15, 0.82, 0.58),
+            "Overijssel": (2.55, 1.38, 0.98, 0.90),
+            "Utrecht": (1.60, 1.95, 0.75, 0.55),
+            "South Holland": (0.55, 2.20, 1.25, 0.90),
+            "Gelderland": (2.05, 2.25, 1.20, 1.00),
+            "Zeeland": (0.10, 3.30, 0.88, 0.78),
+            "North Brabant": (1.15, 3.35, 1.45, 0.95),
+            "Limburg": (2.72, 3.45, 0.78, 0.88),
+        }
+    if country == "Belgium":
+        return {
+            "West Flanders": (0.45, 0.95, 0.95, 0.75),
+            "East Flanders": (1.30, 0.80, 0.95, 0.80),
+            "Antwerp": (2.20, 0.72, 0.88, 0.78),
+            "Limburg": (3.08, 0.86, 0.82, 0.80),
+            "Flemish Brabant": (1.95, 1.65, 0.98, 0.72),
+            "Walloon Brabant": (1.95, 2.55, 0.92, 0.62),
+            "Hainaut": (0.95, 2.45, 1.00, 0.78),
+            "Namur": (2.75, 2.95, 0.90, 0.72),
+            "Liège": (3.25, 2.55, 0.90, 0.72),
+            "Luxembourg": (2.95, 3.78, 1.05, 0.72),
+        }
+    raise ValueError(f"Unsupported country: {country}")
+
+
+def _country_outline(country: str) -> list[tuple[float, float]]:
+    if country == "Netherlands":
+        return [
+            (0.20, 0.05),
+            (3.82, 0.05),
+            (3.92, 1.00),
+            (3.55, 1.95),
+            (3.65, 3.10),
+            (3.05, 4.55),
+            (1.05, 4.75),
+            (0.15, 3.90),
+            (0.05, 1.85),
+        ]
+    if country == "Belgium":
+        return [
+            (0.20, 0.40),
+            (3.95, 0.35),
+            (4.08, 1.55),
+            (3.88, 2.65),
+            (3.50, 3.85),
+            (2.30, 4.60),
+            (0.95, 4.25),
+            (0.20, 3.15),
+            (0.08, 1.50),
+        ]
+    raise ValueError(f"Unsupported country: {country}")
+
+
+def _province_polygon(x: float, y: float, w: float, h: float) -> list[tuple[float, float]]:
+    return [
+        (x + 0.05 * w, y + 0.02 * h),
+        (x + 0.86 * w, y + 0.00 * h),
+        (x + 0.98 * w, y + 0.22 * h),
+        (x + 1.00 * w, y + 0.82 * h),
+        (x + 0.75 * w, y + 1.00 * h),
+        (x + 0.14 * w, y + 0.96 * h),
+        (x + 0.00 * w, y + 0.72 * h),
+        (x + 0.00 * w, y + 0.18 * h),
+    ]
+
+
+def _plot_province_map_panel(
+    ax,
+    counts: pd.DataFrame,
+    country: str,
+    title: str,
+    cmap,
+    vmax: int,
+) -> None:
+    import cartopy
+    import cartopy.crs as ccrs
+    import cartopy.io.shapereader as shpreader
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import Normalize
+
+    cartopy.config["data_dir"] = str(Path(".cartopy_cache").resolve())
+    Path(cartopy.config["data_dir"]).mkdir(parents=True, exist_ok=True)
+
+    if not isinstance(ax.projection, ccrs.CRS):
+        raise TypeError("Province map panel requires a cartopy GeoAxes.")
+
+    reader = shpreader.Reader(
+        shpreader.natural_earth(
+            resolution="10m",
+            category="cultural",
+            name="admin_1_states_provinces",
+        )
+    )
+    records = []
+    for rec in reader.records():
+        attrs = rec.attributes
+        if attrs.get("adm0_a3") != ("NLD" if country == "Netherlands" else "BEL"):
+            continue
+        if attrs.get("type_en") not in {"Province", "Capital Region"}:
+            continue
+        records.append(rec)
+
+    if not records:
+        ax.set_title(title)
+        ax.text(0.5, 0.5, "No province geometries available.", ha="center", va="center")
+        ax.set_axis_off()
+        return
+
+    count_lookup = {str(row["province"]): int(row["count"]) for _, row in counts.iterrows()}
+    norm = Normalize(vmin=0, vmax=max(vmax, 1))
+    count_values = []
+
+    for rec in records:
+        province = rec.attributes.get("name_en") or rec.attributes.get("name")
+        if province == "Brussels Capital":
+            continue
+        if country == "Belgium" and province == "Brussels":
+            continue
+        if country == "Netherlands" and province in {"Bonaire", "St. Eustatius", "Saba"}:
+            continue
+        count = int(count_lookup.get(str(province), 0))
+        count_values.append(count)
+        ax.add_geometries(
+            [rec.geometry],
+            ccrs.PlateCarree(),
+            facecolor=cmap(norm(count)),
+            edgecolor="#ffffff",
+            linewidth=0.9,
+            zorder=2,
+        )
+
+        centroid = rec.geometry.representative_point()
+        ax.text(
+            centroid.x,
+            centroid.y,
+            f"{province}\n{count}",
+            transform=ccrs.PlateCarree(),
+            ha="center",
+            va="center",
+            fontsize=7.8,
+            fontweight="bold" if count else "normal",
+            color=PLOT_TEXT_DARK,
+            zorder=3,
+        )
+
+    all_geoms = [rec.geometry for rec in records]
+    minx = min(geom.bounds[0] for geom in all_geoms)
+    miny = min(geom.bounds[1] for geom in all_geoms)
+    maxx = max(geom.bounds[2] for geom in all_geoms)
+    maxy = max(geom.bounds[3] for geom in all_geoms)
+    xpad = max((maxx - minx) * 0.07, 0.15)
+    ypad = max((maxy - miny) * 0.07, 0.15)
+    ax.set_extent(
+        [minx - xpad, maxx + xpad, miny - ypad, maxy + ypad],
+        crs=ccrs.PlateCarree(),
+    )
+    ax.set_facecolor(PLOT_BG_COLOR)
+    ax.set_title(title)
+
+
+def _plot_combined_province_map(
+    ax,
+    counts: pd.DataFrame,
+    title: str,
+    cmap,
+    vmax: int,
+) -> None:
+    import cartopy
+    import cartopy.crs as ccrs
+    import cartopy.io.shapereader as shpreader
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import Normalize
+
+    cartopy.config["data_dir"] = str(Path(".cartopy_cache").resolve())
+    Path(cartopy.config["data_dir"]).mkdir(parents=True, exist_ok=True)
+
+    if not isinstance(ax.projection, ccrs.CRS):
+        raise TypeError("Province map panel requires a cartopy GeoAxes.")
+
+    reader = shpreader.Reader(
+        shpreader.natural_earth(
+            resolution="10m",
+            category="cultural",
+            name="admin_1_states_provinces",
+        )
+    )
+    records = []
+    for rec in reader.records():
+        attrs = rec.attributes
+        if attrs.get("adm0_a3") not in {"NLD", "BEL"}:
+            continue
+        if attrs.get("type_en") not in {"Province", "Capital Region"}:
+            continue
+        records.append(rec)
+
+    if not records:
+        ax.set_title(title)
+        ax.text(0.5, 0.5, "No province geometries available.", ha="center", va="center")
+        ax.set_axis_off()
+        return
+
+    count_lookup = {
+        (str(row["country"]), str(row["province"])): int(row["count"])
+        for _, row in counts.iterrows()
+    }
+    norm = Normalize(vmin=0, vmax=max(vmax, 1))
+
+    all_geoms = []
+    country_centroids: dict[str, list[tuple[float, float]]] = {"NLD": [], "BEL": []}
+
+    for rec in records:
+        country = rec.attributes.get("adm0_a3")
+        province = rec.attributes.get("name_en") or rec.attributes.get("name")
+        if country == "BEL" and province == "Brussels Capital":
+            continue
+        if country == "NLD" and province in {"Bonaire", "St. Eustatius", "Saba"}:
+            continue
+        count = int(count_lookup.get((str(country), str(province)), 0))
+        all_geoms.append(rec.geometry)
+        centroid = rec.geometry.representative_point()
+        country_centroids.setdefault(country, []).append((centroid.x, centroid.y))
+        ax.add_geometries(
+            [rec.geometry],
+            ccrs.PlateCarree(),
+            facecolor=cmap(norm(count)),
+            edgecolor="#ffffff",
+            linewidth=0.9,
+            zorder=2,
+        )
+        ax.text(
+            centroid.x,
+            centroid.y,
+            f"{province}\n{count}",
+            transform=ccrs.PlateCarree(),
+            ha="center",
+            va="center",
+            fontsize=7.6,
+            fontweight="bold" if count else "normal",
+            color=PLOT_TEXT_DARK,
+            zorder=3,
+        )
+
+    if all_geoms:
+        minx = min(geom.bounds[0] for geom in all_geoms)
+        miny = min(geom.bounds[1] for geom in all_geoms)
+        maxx = max(geom.bounds[2] for geom in all_geoms)
+        maxy = max(geom.bounds[3] for geom in all_geoms)
+        xpad = max((maxx - minx) * 0.06, 0.15)
+        ypad = max((maxy - miny) * 0.06, 0.15)
+        ax.set_extent(
+            [minx - xpad, maxx + xpad, miny - ypad, maxy + ypad],
+            crs=ccrs.PlateCarree(),
+        )
+
+    if country_centroids["NLD"]:
+        xs, ys = zip(*country_centroids["NLD"], strict=False)
+        ax.text(
+            sum(xs) / len(xs),
+            sum(ys) / len(ys) + 0.35,
+            "Netherlands",
+            transform=ccrs.PlateCarree(),
+            ha="center",
+            va="bottom",
+            fontsize=11.0,
+            fontweight="bold",
+            color=PLOT_DEV_COLOR,
+            zorder=4,
+        )
+    if country_centroids["BEL"]:
+        xs, ys = zip(*country_centroids["BEL"], strict=False)
+        ax.text(
+            sum(xs) / len(xs),
+            sum(ys) / len(ys) + 0.35,
+            "Belgium",
+            transform=ccrs.PlateCarree(),
+            ha="center",
+            va="bottom",
+            fontsize=11.0,
+            fontweight="bold",
+            color=PLOT_EVAL_COLOR,
+            zorder=4,
+        )
+
+    ax.set_facecolor(PLOT_BG_COLOR)
+    ax.set_title(title)
+
+
+def plot_region_study_province_maps(
+    df: pd.DataFrame,
+    output_dir: str = "region_study_province_maps",
+) -> dict[str, Path]:
+    """
+    Plot study counts by province on a single combined Netherlands/Belgium map.
+
+    Studies can contribute to multiple provinces when the region field contains
+    multiple comma-separated locations.
+    """
+
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+
+    os.environ.setdefault(
+        "MPLCONFIGDIR",
+        str(Path(".matplotlib_cache").resolve()),
+    )
+    import cartopy
+    import cartopy.crs as ccrs
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+
+    cartopy.config["data_dir"] = str(Path(".cartopy_cache").resolve())
+    Path(cartopy.config["data_dir"]).mkdir(parents=True, exist_ok=True)
+
+    _setup_publication_style()
+
+    province_cmap = LinearSegmentedColormap.from_list(
+        "province_blue_tint",
+        ["#f4f8fc", "#d8e7f2", "#b1cde2", "#7fa8ca", PLOT_DEV_COLOR],
+    )
+
+    dev_counts, dev_mapped_total = _study_province_counts(df, "Dev region")
+    ev_counts, ev_mapped_total = _study_province_counts(df, "Ev region")
+    dev_map_counts = _study_province_counts_any(df, ("Dev region",))
+    ev_map_counts = _study_province_counts_any(df, ("Ev region",))
+    combined_counts = _study_province_counts_any(df)
+
+    dev_counts.to_csv(output_dir_path / "dev_region_province_counts.csv", index=False)
+    ev_counts.to_csv(output_dir_path / "ev_region_province_counts.csv", index=False)
+    combined_counts.to_csv(output_dir_path / "province_counts_combined_nl_be.csv", index=False)
+
+    vmax = int(combined_counts["count"].max() if not combined_counts.empty else 0)
+    fig, ax = plt.subplots(
+        1,
+        1,
+        figsize=(PUB_DOUBLE_COL_WIDTH * 1.55, 6.0),
+        subplot_kw={"projection": ccrs.PlateCarree()},
+    )
+    ax.set_facecolor(PLOT_PANEL_BG_COLOR)
+    _plot_combined_province_map(
+        ax,
+        combined_counts,
+        f"Study counts by province [n={combined_counts.attrs.get('total_studies', 0)}]",
+        province_cmap,
+        vmax,
+    )
+
+    sm = plt.cm.ScalarMappable(cmap=province_cmap, norm=Normalize(vmin=0, vmax=max(vmax, 1)))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label("Number of unique studies")
+    fig.suptitle(
+        "Study counts by province (Netherlands + Belgium)\n"
+        "Comma-separated region labels are split before counting; nationwide/unassigned labels are excluded from province allocation.",
+        y=0.995,
+    )
+    fig.subplots_adjust(top=0.90, bottom=0.06, left=0.03, right=0.92)
+    output_path = output_dir_path / "study_counts_by_province_combined.pdf"
+    fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(fig)
+    panel_fig, panel_axes = plt.subplots(
+        1,
+        3,
+        figsize=(PUB_DOUBLE_COL_WIDTH * 2.1, 6.1),
+        subplot_kw={"projection": ccrs.PlateCarree()},
+    )
+    panel_specs = [
+        ("Development region", dev_map_counts),
+        ("Evaluation region", ev_map_counts),
+        ("Development + evaluation", combined_counts),
+    ]
+    panel_vmax = max(
+        [int(dev_map_counts["count"].max() if not dev_map_counts.empty else 0)]
+        + [int(ev_map_counts["count"].max() if not ev_map_counts.empty else 0)]
+        + [int(combined_counts["count"].max() if not combined_counts.empty else 0)]
+    )
+    for ax, (label, panel_counts) in zip(panel_axes.flat, panel_specs, strict=False):
+        ax.set_facecolor(PLOT_PANEL_BG_COLOR)
+        _plot_combined_province_map(
+            ax,
+            panel_counts,
+            f"{label} [n={panel_counts.attrs.get('total_studies', 0)}]",
+            province_cmap,
+            panel_vmax,
+        )
+    panel_sm = plt.cm.ScalarMappable(
+        cmap=province_cmap,
+        norm=Normalize(vmin=0, vmax=max(panel_vmax, 1)),
+    )
+    panel_sm.set_array([])
+    panel_cbar = panel_fig.colorbar(panel_sm, ax=panel_axes.ravel().tolist(), fraction=0.03, pad=0.02)
+    panel_cbar.set_label("Number of unique studies")
+    panel_fig.suptitle(
+        "Study counts by province (Netherlands + Belgium)\n"
+        "Comma-separated region labels are split before counting; nationwide/unassigned labels are excluded from province allocation.",
+        y=0.995,
+    )
+    panel_fig.subplots_adjust(top=0.90, bottom=0.06, left=0.02, right=0.93, wspace=0.02)
+    panel_output_path = output_dir_path / "study_counts_by_province_panel.pdf"
+    panel_fig.savefig(panel_output_path, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(panel_fig)
+    return {
+        "dev_csv": output_dir_path / "dev_region_province_counts.csv",
+        "ev_csv": output_dir_path / "ev_region_province_counts.csv",
+        "combined_csv": output_dir_path / "province_counts_combined_nl_be.csv",
+        "pdf": output_path,
+        "panel_pdf": panel_output_path,
+    }
 
 
 def _architecture_percentages_by_year(
@@ -761,17 +2762,17 @@ def _plot_stacked_percentage_bars(
 
     categories = list(percentage_df.columns)
     years = percentage_df.index.to_list()
-    colors = plt.cm.tab20.colors
+    colors = _architecture_color_map(categories)
 
     bottom = pd.Series(0.0, index=percentage_df.index)
-    for i, category in enumerate(categories):
+    for category in categories:
         values = percentage_df[category]
         ax.bar(
             years,
             values,
             bottom=bottom,
             label=category,
-            color=colors[i % len(colors)],
+            color=colors.get(category, "#8ba6c6"),
             width=0.82,
         )
         bottom = bottom + values
@@ -815,17 +2816,17 @@ def _plot_stacked_count_bars(
 
     categories = list(count_df.columns)
     years = count_df.index.to_list()
-    colors = plt.cm.tab20.colors
+    colors = _architecture_color_map(categories)
 
     bottom = pd.Series(0, index=count_df.index, dtype=float)
-    for i, category in enumerate(categories):
+    for category in categories:
         values = count_df[category].fillna(0)
         ax.bar(
             years,
             values,
             bottom=bottom,
             label=category,
-            color=colors[i % len(colors)],
+            color=colors.get(category, "#8ba6c6"),
             width=0.82,
         )
         bottom = bottom + values
@@ -850,7 +2851,7 @@ def _plot_stacked_count_bars(
 def plot_architecture_study_count_panels_by_usage_category(
     df: pd.DataFrame,
     output_dir: str = "model_architecture_percentages_by_year",
-    output_name: str = "architecture_study_counts_by_year_panels.png",
+    output_name: str = "architecture_study_counts_by_year_panels.pdf",
 ) -> Path:
     """
     Plot study counts by year in one panel figure per usage category.
@@ -867,10 +2868,22 @@ def plot_architecture_study_count_panels_by_usage_category(
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
-    panels: list[tuple[str, pd.DataFrame]] = []
+    panels: list[tuple[str, pd.DataFrame, int]] = []
     for usage_category in sorted(df["Usage category"].dropna().unique()):
         counts = _architecture_study_counts_by_year(df, usage_category=usage_category)
-        panels.append((usage_category, counts))
+        study_count = int(
+            df.loc[
+                df["Usage category"] == usage_category,
+                "Title",
+            ]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .replace("", pd.NA)
+            .dropna()
+            .nunique()
+        )
+        panels.append((usage_category, counts, study_count))
 
     output_path = output_dir_path / output_name
 
@@ -894,11 +2907,11 @@ def plot_architecture_study_count_panels_by_usage_category(
     categories = sorted(
         {
             architecture
-            for _, panel_df in panels
+            for _, panel_df, _ in panels
             for architecture in panel_df.columns
         }
     )
-    colors = {category: plt.cm.tab20(i % 20) for i, category in enumerate(categories)}
+    colors = _architecture_color_map(categories)
 
     n_panels = len(panels)
     ncols = 2 if n_panels > 1 else 1
@@ -916,7 +2929,7 @@ def plot_architecture_study_count_panels_by_usage_category(
         ax.axis("off")
 
     legend_handles = {}
-    for ax, (usage_category, count_df) in zip(axes_list, panels):
+    for ax, (usage_category, count_df, study_count) in zip(axes_list, panels):
         years = count_df.index.to_list()
         bottom = pd.Series(0.0, index=count_df.index)
 
@@ -931,7 +2944,7 @@ def plot_architecture_study_count_panels_by_usage_category(
                 years,
                 values,
                 bottom=bottom,
-                color=colors[category],
+                color=colors.get(category, "#8ba6c6"),
                 width=0.82,
                 label=category,
             )
@@ -939,7 +2952,7 @@ def plot_architecture_study_count_panels_by_usage_category(
             if category not in legend_handles:
                 legend_handles[category] = bar[0]
 
-        ax.set_title(usage_category)
+        ax.set_title(f"{usage_category} [n={study_count}]")
         ax.set_xlabel("Year")
         ax.set_ylabel("Studies")
         ax.set_xticks(years)
@@ -984,7 +2997,7 @@ def plot_model_architecture_percentages_by_year(
     overall.to_csv(overall_csv)
     _plot_stacked_percentage_bars(
         overall,
-        output_dir_path / "architecture_study_percentages_by_year_overall.png",
+        output_dir_path / "architecture_study_percentages_by_year_overall.pdf",
         "Model architecture usage by year (studies)",
         ylabel="Percentage of studies",
     )
@@ -992,7 +3005,7 @@ def plot_model_architecture_percentages_by_year(
     overall_counts.to_csv(output_dir_path / "architecture_study_counts_by_year_overall.csv")
     _plot_stacked_count_bars(
         overall_counts,
-        output_dir_path / "architecture_study_counts_by_year_overall.png",
+        output_dir_path / "architecture_study_counts_by_year_overall.pdf",
         "Number of studies using each architecture by year",
         ylabel="Number of studies",
     )
@@ -1009,7 +3022,7 @@ def plot_model_architecture_percentages_by_year(
             )
             _plot_stacked_percentage_bars(
                 pivot,
-                output_dir_path / f"architecture_study_percentages_by_year_{safe_category}.png",
+                output_dir_path / f"architecture_study_percentages_by_year_{safe_category}.pdf",
                 f"Model architecture usage by year (studies): {usage_category}",
                 ylabel="Percentage of studies",
             )
@@ -1018,7 +3031,7 @@ def plot_model_architecture_percentages_by_year(
             )
             _plot_stacked_count_bars(
                 counts,
-                output_dir_path / f"architecture_study_counts_by_year_{safe_category}.png",
+                output_dir_path / f"architecture_study_counts_by_year_{safe_category}.pdf",
                 f"Number of studies using each architecture by year: {usage_category}",
                 ylabel="Number of studies",
             )
@@ -1072,6 +3085,8 @@ def create_comparator_graph(df: pd.DataFrame) -> pd.DataFrame:
             "Main metric",
             "Ev metrics",
             "Title",
+            "First author",
+            "Year",
             BASE_MODEL_COLUMN,
             "Base model",
             "Category",
@@ -1105,20 +3120,42 @@ def create_comparator_graph(df: pd.DataFrame) -> pd.DataFrame:
             }
 
             for col in optional_columns:
+                if col in {"Title", "First author", "Year"}:
+                    edge[f"{col} 1"] = _json_safe_scalar(row_1[col])
+                    edge[f"{col} 2"] = _json_safe_scalar(row_2[col])
+                    continue
                 if col in {BASE_MODEL_COLUMN, "Base model", "Category", "Type of model"}:
                     if col in {BASE_MODEL_COLUMN, "Base model"}:
-                        edge["base model 1"] = row_1[col]
-                        edge["base model 2"] = row_2[col]
+                        edge["base model 1"] = _json_safe_scalar(row_1[col])
+                        edge["base model 2"] = _json_safe_scalar(row_2[col])
                     else:
-                        edge[f"{col} 1"] = row_1[col]
-                        edge[f"{col} 2"] = row_2[col]
+                        edge[f"{col} 1"] = _json_safe_scalar(row_1[col])
+                        edge[f"{col} 2"] = _json_safe_scalar(row_2[col])
                     continue
-                edge[col] = row_1[col]
+                edge[col] = _json_safe_scalar(row_1[col])
+
+            for field in ("Title", "First author", "Year"):
+                if field in row_1.index and field in row_2.index:
+                    edge[f"{field} 1"] = _json_safe_scalar(row_1[field])
+                    edge[f"{field} 2"] = _json_safe_scalar(row_2[field])
+            doi_1 = row_1.get("DOI", row_1.get("Study DOI / link", ""))
+            doi_2 = row_2.get("DOI", row_2.get("Study DOI / link", ""))
+            doi_display_1, doi_href_1, doi_title_1 = _normalize_doi(doi_1)
+            doi_display_2, doi_href_2, doi_title_2 = _normalize_doi(doi_2)
+            edge["doi_display 1"] = _json_safe_scalar(doi_display_1)
+            edge["doi_href 1"] = _json_safe_scalar(doi_href_1)
+            edge["doi_title 1"] = _json_safe_scalar(doi_title_1)
+            edge["doi_display 2"] = _json_safe_scalar(doi_display_2)
+            edge["doi_href 2"] = _json_safe_scalar(doi_href_2)
+            edge["doi_title 2"] = _json_safe_scalar(doi_title_2)
 
             edges.append(edge)
 
     numbered_optional_columns = []
     for col in optional_columns:
+        if col in {"Title", "First author", "Year"}:
+            numbered_optional_columns.extend([f"{col} 1", f"{col} 2"])
+            continue
         if col in {BASE_MODEL_COLUMN, "Base model", "Category", "Type of model"}:
             if col in {BASE_MODEL_COLUMN, "Base model"}:
                 numbered_optional_columns.extend(["base model 1", "base model 2"])
@@ -1126,6 +3163,16 @@ def create_comparator_graph(df: pd.DataFrame) -> pd.DataFrame:
             numbered_optional_columns.extend([f"{col} 1", f"{col} 2"])
         else:
             numbered_optional_columns.append(col)
+    numbered_optional_columns.extend(
+        [
+            "doi_display 1",
+            "doi_href 1",
+            "doi_title 1",
+            "doi_display 2",
+            "doi_href 2",
+            "doi_title 2",
+        ]
+    )
     columns = [
         "Comparator block",
         *numbered_optional_columns,
@@ -1282,7 +3329,7 @@ def _prepare_comparison_graph_rows(
 
 def create_model_architecture_win_graph(
     pairwise_df: pd.DataFrame,
-    output_path: str | None = "model_architecture_win_graph.png",
+    output_path: str | None = "model_architecture_win_graph.pdf",
     show: bool = False,
     include_self_edges: bool = False,
     usage_category: str | None = None,
@@ -1507,7 +3554,7 @@ def create_model_architecture_win_graph(
                     arrowstyle="-|>",
                     mutation_scale=10 + 9 * edge_strength(weight),
                     linewidth=width,
-                    color="#4a667a",
+                    color=PLOT_MUTED_COLOR,
                     alpha=alpha,
                     zorder=1,
                 )
@@ -1540,7 +3587,7 @@ def create_model_architecture_win_graph(
                 arrowstyle="-|>",
                 mutation_scale=10 + 9 * edge_strength(weight),
                 linewidth=width,
-                color="#4a667a",
+                color=PLOT_MUTED_COLOR,
                 alpha=alpha,
                 shrinkA=0,
                 shrinkB=0,
@@ -1573,21 +3620,22 @@ def create_model_architecture_win_graph(
             graph,
             pos,
             node_size=node_sizes,
-            node_color="#d9ecff",
+            node_color="#d9e9f5",
             edgecolors="#234",
             ax=ax,
         )
         for node in graph.nodes:
             x, y = pos[node]
+            node_lines, font_size = _node_label_style(node, width=18)
             ax.text(
                 x,
                 y,
-                "\n".join(_wrap_node_label(node, width=20)),
-                fontsize=8.1,
+                "\n".join(node_lines),
+                fontsize=font_size,
                 fontweight="bold",
                 ha="center",
                 va="center",
-                linespacing=0.95,
+                linespacing=0.90,
                 zorder=5,
             )
         title = "Model architecture wins over other architectures"
@@ -1643,11 +3691,69 @@ def _wrap_node_label(value: str, width: int = 22) -> list[str]:
     return lines or [text]
 
 
+def _node_label_style(node: str, width: int = 20) -> tuple[list[str], float]:
+    lines = _wrap_node_label(node, width=width)
+    max_line_len = max((len(line) for line in lines), default=0)
+    font_size = 8.4 - 0.14 * max(0, max_line_len - 12) - 0.25 * max(0, len(lines) - 1)
+    font_size = max(6.0, min(8.2, font_size))
+    return lines, font_size
+
+
 def _normalize_docx_text(value) -> str:
     if pd.isna(value):
         return ""
     text = str(value).strip()
     return text if text and text.lower() != "nan" else ""
+
+
+def _normalize_doi(value) -> tuple[str, str, str]:
+    """
+    Return (display_text, href, title) for a study reference value.
+
+    DOI strings are normalized to canonical doi.org links.
+    Non-DOI URLs are kept as-is and labeled as generic study links.
+    """
+    text = _normalize_docx_text(value)
+    if not text:
+        return "", "", ""
+
+    text = re.sub(r"\s+", "", text)
+    lower = text.lower()
+    doi_match = re.match(r"^(?:https?://(?:dx\.)?doi\.org/)?(10\.\d{4,9}/\S+)$", text, flags=re.IGNORECASE)
+    if doi_match:
+        doi = doi_match.group(1)
+        href = f"https://doi.org/{doi}"
+        return "DOI", href, doi
+
+    if lower.startswith("https://doi.org/") or lower.startswith("http://doi.org/"):
+        doi = re.sub(r"^https?://doi\.org/", "", text, flags=re.IGNORECASE)
+        href = f"https://doi.org/{doi}"
+        return "DOI", href, doi
+
+    if lower.startswith("https://dx.doi.org/") or lower.startswith("http://dx.doi.org/"):
+        doi = re.sub(r"^https?://dx\.doi\.org/", "", text, flags=re.IGNORECASE)
+        href = f"https://doi.org/{doi}"
+        return "DOI", href, doi
+
+    if lower.startswith(("https://", "http://")):
+        parsed = urlparse(text)
+        host = (parsed.netloc or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        label_map = {
+            "arxiv.org": "arXiv",
+            "dx.doi.org": "DOI",
+            "doi.org": "DOI",
+            "github.com": "GitHub",
+            "pubmed.ncbi.nlm.nih.gov": "PubMed",
+            "proceedings.mlr.press": "PMLR",
+            "pmlr.press": "PMLR",
+            "zenodo.org": "Zenodo",
+        }
+        display = label_map.get(host, host or "Study link")
+        return display, text, text
+
+    return "DOI", f"https://doi.org/{text}", text
 
 
 def _docx_cell_text(value) -> str:
@@ -1889,6 +3995,18 @@ def create_model_catalog_dashboard_html(
         for value in parsed_eval["Title"].dropna().tolist()
         if _normalize_docx_text(value)
     ) if "Title" in parsed_eval.columns else set()
+    parsed_eval_by_title: dict[str, dict[str, list[float]]] = {}
+    for _, parsed_row in parsed_eval.iterrows():
+        title = _normalize_docx_text(parsed_row.get("Title", ""))
+        unit = _normalize_docx_text(parsed_row.get("unit", "")).lower()
+        value = pd.to_numeric(parsed_row.get("sample size", None), errors="coerce")
+        if not title or pd.isna(value):
+            continue
+        bucket = parsed_eval_by_title.setdefault(title, {"texts": [], "patients": []})
+        if unit == "texts":
+            bucket["texts"].append(float(value))
+        elif unit == "patients":
+            bucket["patients"].append(float(value))
 
     rows = []
     for _, row in df.iterrows():
@@ -1896,6 +4014,7 @@ def create_model_catalog_dashboard_html(
         shared = _normalize_docx_text(row["Model shared"])
         location = _normalize_docx_text(row["Code location(s)"]) if shared.lower() in {"yes", "partially"} else ""
         normalized_task_description = _normalize_docx_text(row["NLP Task description"])
+        doi_display, doi_href, doi_title = _normalize_doi(row.get("DOI", ""))
         rows.append({
             "author": _normalize_docx_text(row["First author"]),
             "abbreviation": _normalize_docx_text(row["Model abbreviation"]),
@@ -1905,6 +4024,9 @@ def create_model_catalog_dashboard_html(
             "nlp_task_description": normalized_task_description,
             "shared": shared,
             "model_location": location or "Not listed",
+            "doi_display": doi_display,
+            "doi_href": doi_href,
+            "doi_title": doi_title,
             "evaluation_flag": _normalize_docx_text(row.get("Ev conducted yes/no", "")),
             "has_parsed_eval_sample_size": _normalize_docx_text(row["Title"]) in parsed_eval_titles,
         })
@@ -1921,6 +4043,7 @@ def create_model_catalog_dashboard_html(
         df["Model shared"].astype(str).str.strip().str.lower().eq("no").sum()
     )
     eval_sample_size_entries = int(len(parsed_eval))
+    parsed_eval_by_title_json = json.dumps(parsed_eval_by_title, ensure_ascii=False).replace("</", "<\\/")
 
     json_data = json.dumps(rows, ensure_ascii=False).replace("</", "<\\/")
     nav_compare = compare_dashboard_path
@@ -1940,10 +4063,10 @@ def create_model_catalog_dashboard_html(
     --ink: #17212b;
     --muted: #5d6d7e;
     --line: #d6dde5;
-    --blue: #1191FA;
-    --blue-dark: #004285;
-    --blue-soft: #DCEEFF;
-    --accent: #FC6039;
+    --blue: #2f6f9f;
+    --blue-dark: #1f4f73;
+    --blue-soft: #d9e9f5;
+    --accent: #d46b35;
     --bg: #FFFFFF;
   }}
   body {{
@@ -2012,7 +4135,7 @@ def create_model_catalog_dashboard_html(
   }}
   .stats {{
     display: grid;
-    grid-template-columns: repeat(6, minmax(120px, 1fr));
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
     gap: 10px;
     padding: 14px 14px 0;
   }}
@@ -2030,6 +4153,20 @@ def create_model_catalog_dashboard_html(
     font-size: 20px;
     font-weight: 800;
     margin-top: 4px;
+  }}
+  .stat .value.multi {{
+    font-size: 15px;
+    line-height: 1.25;
+    display: grid;
+    gap: 2px;
+  }}
+  .stat .value.multi span {{
+    display: block;
+  }}
+  .stat .subtle {{
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
   }}
   .toolbar {{
     display: grid;
@@ -2113,6 +4250,27 @@ def create_model_catalog_dashboard_html(
     font-weight: 700;
     font-size: 11px;
   }}
+  .doi-chip {{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(17,145,250,.22);
+    background: rgba(17,145,250,.08);
+    color: var(--blue-dark);
+    font-size: 11px;
+    font-weight: 800;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }}
+  .doi-chip:hover {{
+    background: rgba(17,145,250,.14);
+    border-color: rgba(17,145,250,.35);
+  }}
   .empty {{
     padding: 18px;
     color: var(--muted);
@@ -2138,12 +4296,17 @@ def create_model_catalog_dashboard_html(
   </div>
 </header>
 <section class="stats">
-  <div class="stat"><div class="label">Rows</div><div class="value" id="statRows">0</div></div>
+  <div class="stat"><div class="label">Studies involved</div><div class="value" id="statStudies">0</div></div>
   <div class="stat"><div class="label">Models</div><div class="value" id="statModels">0</div></div>
   <div class="stat"><div class="label">Evaluations</div><div class="value" id="statEvaluations">0</div></div>
   <div class="stat"><div class="label">Shared</div><div class="value" id="statShared">0</div></div>
-  <div class="stat"><div class="label">Not shared</div><div class="value" id="statNotShared">0</div></div>
-  <div class="stat"><div class="label">Eval sample sizes</div><div class="value" id="statEvalSizes">0</div></div>
+  <div class="stat">
+    <div class="label">Eval sample size avg</div>
+    <div class="value multi" id="statEvalSizes">
+      <span>Texts: n/a</span>
+      <span>Patients: n/a</span>
+    </div>
+  </div>
 </section>
 <section class="toolbar">
   <div class="control">
@@ -2169,6 +4332,7 @@ def create_model_catalog_dashboard_html(
         <th>Author</th>
         <th>Abbreviation</th>
         <th>Year</th>
+        <th>Study DOI / link</th>
         <th>Usage category</th>
         <th>NLP task description</th>
         <th>Shared</th>
@@ -2181,6 +4345,7 @@ def create_model_catalog_dashboard_html(
 </div>
 <script>
 const DATA = __JSON_DATA__;
+const STUDY_EVAL_SIZES = __STUDY_EVAL_SIZES__;
 const usageSelect = document.getElementById("usage");
 const sharedOnly = document.getElementById("sharedOnly");
 const search = document.getElementById("search");
@@ -2210,24 +4375,45 @@ function isEvaluated(value) {{
 }}
 
 function computeStats(rows) {{
+  const studies = [...new Set(rows.map(row => row.title).filter(Boolean))].length;
+  const titles = [...new Set(rows.map(row => row.title).filter(Boolean))];
+  const textValues = [];
+  const patientValues = [];
+  const average = values => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  for (const title of titles) {{
+    const study = STUDY_EVAL_SIZES[title];
+    if (!study) continue;
+    if (Array.isArray(study.texts) && study.texts.length) textValues.push(average(study.texts));
+    if (Array.isArray(study.patients) && study.patients.length) patientValues.push(average(study.patients));
+  }}
   return {{
-    rows: rows.length,
+    studies,
     models: new Set(rows.map(row => row.abbreviation).filter(Boolean)).size,
     evaluations: rows.filter(row => isEvaluated(row.evaluation_flag)).length,
     shared: rows.filter(row => isShared(row.shared)).length,
-    notShared: rows.filter(row => normalize(row.shared) === "no").length,
-    evalSampleSizes: new Set(rows.filter(row => row.has_parsed_eval_sample_size).map(row => row.title).filter(Boolean)).size,
+    evalSampleSizesTexts: {{
+      count: textValues.length,
+      mean: average(textValues),
+    }},
+    evalSampleSizesPatients: {{
+      count: patientValues.length,
+      mean: average(patientValues),
+    }},
   }};
 }}
 
 function renderStats(rows) {{
   const stats = computeStats(rows);
-  document.getElementById("statRows").textContent = stats.rows.toLocaleString();
+  document.getElementById("statStudies").textContent = stats.studies.toLocaleString();
   document.getElementById("statModels").textContent = stats.models.toLocaleString();
   document.getElementById("statEvaluations").textContent = stats.evaluations.toLocaleString();
   document.getElementById("statShared").textContent = stats.shared.toLocaleString();
-  document.getElementById("statNotShared").textContent = stats.notShared.toLocaleString();
-  document.getElementById("statEvalSizes").textContent = stats.evalSampleSizes.toLocaleString();
+  const textMean = stats.evalSampleSizesTexts.mean === null ? "n/a" : stats.evalSampleSizesTexts.mean.toFixed(0);
+  const patientMean = stats.evalSampleSizesPatients.mean === null ? "n/a" : stats.evalSampleSizesPatients.mean.toFixed(0);
+  document.getElementById("statEvalSizes").innerHTML = `
+    <span>Texts: ${{textMean}}${{stats.evalSampleSizesTexts.count ? ` <span class="subtle">(n=${{stats.evalSampleSizesTexts.count}})</span>` : ""}}</span>
+    <span>Patients: ${{patientMean}}${{stats.evalSampleSizesPatients.count ? ` <span class="subtle">(n=${{stats.evalSampleSizesPatients.count}})</span>` : ""}}</span>
+  `;
 }}
 
 const usageCategories = [...new Set(DATA.map(row => row.usage_category).filter(Boolean))].sort();
@@ -2243,6 +4429,8 @@ function passesFilters(row) {{
     row.author,
     row.abbreviation,
     row.year,
+    row.doi_display,
+    row.doi_title,
     row.usage_category,
     row.nlp_task_description,
     row.shared,
@@ -2258,6 +4446,7 @@ function render() {{
       <td>${{esc(row.author)}}</td>
       <td>${{esc(row.abbreviation)}}</td>
       <td>${{esc(row.year)}}</td>
+      <td>${{row.doi_href ? `<a class="doi-chip" href="${{esc(row.doi_href)}}" target="_blank" rel="noopener noreferrer" title="${{esc(row.doi_title || row.doi_href)}}">${{esc(row.doi_display || "DOI")}}</a>` : ""}}</td>
       <td>${{esc(row.usage_category)}}</td>
       <td>${{esc(row.nlp_task_description)}}</td>
       <td><span class="pill">${{esc(row.shared || "n/a")}}</span></td>
@@ -2284,6 +4473,7 @@ render();
         .replace("__SHARED_ROWS__", str(shared_rows))
         .replace("__NOT_SHARED_ROWS__", str(not_shared_rows))
         .replace("__EVAL_SAMPLE_SIZE_ENTRIES__", str(eval_sample_size_entries))
+        .replace("__STUDY_EVAL_SIZES__", parsed_eval_by_title_json)
         .replace("__JSON_DATA__", json_data)
         .replace("__CATALOG__", nav_catalog)
         .replace("__COMPARE__", nav_compare)
@@ -2313,7 +4503,8 @@ def _weighted_circular_node_order(nodes, edges) -> list:
         if source == target:
             continue
         pair = tuple(sorted([source, target]))
-        pair_weights[pair] = pair_weights.get(pair, 0) + int(edge["weight"])
+        weight = edge.get("weight", edge.get("comparison_weight", edge.get("study_weight", 0)))
+        pair_weights[pair] = pair_weights.get(pair, 0) + int(weight)
 
     if not pair_weights:
         return nodes
@@ -2458,7 +4649,7 @@ def create_model_architecture_win_graphs_by_usage_category(
 
     results = {}
     for category in usage_categories:
-        output_path = output_dir_path / f"{_safe_filename(category)}.png"
+        output_path = output_dir_path / f"{_safe_filename(category)}.pdf"
         results[category] = create_model_architecture_win_graph(
             pairwise_df,
             output_path=str(output_path),
@@ -2500,15 +4691,28 @@ def create_interactive_model_architecture_graph_html(
         )
 
     optional_columns = [
-        col for col in ["Comparator block", "Title", "Main metric", "Ev metrics"]
+        col for col in ["Comparator block", "Title 1", "Title 2", "Main metric", "Ev metrics"]
         if col in pairwise_df.columns
     ]
+
+    def _json_safe_scalar(value):
+        if pd.isna(value):
+            return ""
+        if isinstance(value, (pd.Timestamp,)):
+            return str(value)
+        return value
+
     graph_data = {}
     for mode_name, mode_cfg in _comparison_mode_config().items():
         _, comparisons = _prepare_comparison_graph_rows(
             pairwise_df,
             mode_name,
             include_self_edges=include_self_edges,
+        )
+        _, comparisons_with_self = _prepare_comparison_graph_rows(
+            pairwise_df,
+            mode_name,
+            include_self_edges=True,
         )
 
         mode_graph = {
@@ -2521,43 +4725,116 @@ def create_interactive_model_architecture_graph_html(
             continue
 
         for usage_category, category_df in comparisons.groupby("usage category 1", sort=True):
+            category_df_with_self = comparisons_with_self[
+                comparisons_with_self["usage category 1"] == usage_category
+            ].copy()
+            graph_study_titles = set()
+            node_arch_labels: dict[str, str] = {}
+            node_arch_counts: dict[str, dict[str, int]] = {}
+            for row_dict in category_df_with_self.to_dict(orient="records"):
+                for title_key in ("Title 1", "Title 2", "Title"):
+                    study_title = _normalize_docx_text(row_dict.get(title_key, ""))
+                    if study_title:
+                        graph_study_titles.add(study_title)
+                for side in ("1", "2"):
+                    node_label = _normalize_docx_text(row_dict.get(f"node {side}", ""))
+                    arch_label = _normalize_docx_text(
+                        row_dict.get(f"model architecture category {side}", "")
+                    )
+                    if node_label and arch_label:
+                        node_arch_counts.setdefault(node_label, {})
+                        node_arch_counts[node_label][arch_label] = (
+                            node_arch_counts[node_label].get(arch_label, 0) + 1
+                        )
             category_nodes = sorted(
                 set(category_df["node 1"].dropna()) | set(category_df["node 2"].dropna())
             )
-            edges = []
-            grouped = category_df.groupby(["winner", "loser"], sort=True)
-            for (winner, loser), edge_df in grouped:
-                details = []
-                for row_dict in edge_df.to_dict(orient="records"):
-                    winner_first = row_dict["metric value 1"] > row_dict["metric value 2"]
-                    winner_side = "1" if winner_first else "2"
-                    loser_side = "2" if winner_first else "1"
-                    detail = {
-                        "winner_model": row_dict[f"model abbreviation {winner_side}"],
-                        "winner_node": row_dict[f"node {winner_side}"],
-                        "winner_metric_value": row_dict[f"metric value {winner_side}"],
-                        "loser_model": row_dict[f"model abbreviation {loser_side}"],
-                        "loser_node": row_dict[f"node {loser_side}"],
-                        "loser_metric_value": row_dict[f"metric value {loser_side}"],
-                    }
-                    for col in optional_columns:
-                        detail[col] = row_dict.get(col, "")
-                    details.append(detail)
+            for node_label, counts in node_arch_counts.items():
+                node_arch_labels[node_label] = max(
+                    counts.items(), key=lambda item: (item[1], item[0])
+                )[0]
+            if mode_name == "architecture":
+                node_arch_labels.update({node: node for node in category_nodes})
+            node_colors = _architecture_color_map(
+                [node_arch_labels.get(node, "") for node in category_nodes]
+            )
+            def _build_edges(edge_source_df: pd.DataFrame) -> list[dict[str, object]]:
+                edges_local = []
+                grouped = edge_source_df.groupby(["winner", "loser"], sort=True)
+                for (winner, loser), edge_df in grouped:
+                    details = []
+                    study_titles = set()
+                    for row_dict in edge_df.to_dict(orient="records"):
+                        winner_first = row_dict["metric value 1"] > row_dict["metric value 2"]
+                        winner_side = "1" if winner_first else "2"
+                        loser_side = "2" if winner_first else "1"
+                        for title_key in ("Title 1", "Title 2", "Title"):
+                            study_title = _normalize_docx_text(row_dict.get(title_key, ""))
+                            if study_title:
+                                study_titles.add(study_title)
+                        detail = {
+                            "winner_model": row_dict[f"model abbreviation {winner_side}"],
+                            "winner_node": row_dict[f"node {winner_side}"],
+                            "winner_metric_value": row_dict[f"metric value {winner_side}"],
+                            "loser_model": row_dict[f"model abbreviation {loser_side}"],
+                            "loser_node": row_dict[f"node {loser_side}"],
+                            "loser_metric_value": row_dict[f"metric value {loser_side}"],
+                            "winner_first_author": _json_safe_scalar(row_dict.get(f"First author {winner_side}", "")),
+                            "winner_year": _json_safe_scalar(row_dict.get(f"Year {winner_side}", "")),
+                            "winner_doi_display": _json_safe_scalar(row_dict.get(f"doi_display {winner_side}", "")),
+                            "winner_doi_href": _json_safe_scalar(row_dict.get(f"doi_href {winner_side}", "")),
+                            "winner_doi_title": _json_safe_scalar(row_dict.get(f"doi_title {winner_side}", "")),
+                            "loser_first_author": _json_safe_scalar(row_dict.get(f"First author {loser_side}", "")),
+                            "loser_year": _json_safe_scalar(row_dict.get(f"Year {loser_side}", "")),
+                            "loser_doi_display": _json_safe_scalar(row_dict.get(f"doi_display {loser_side}", "")),
+                            "loser_doi_href": _json_safe_scalar(row_dict.get(f"doi_href {loser_side}", "")),
+                            "loser_doi_title": _json_safe_scalar(row_dict.get(f"doi_title {loser_side}", "")),
+                        }
+                        for field in ("Title", "First author", "Year"):
+                            left_key = f"{field} 1"
+                            right_key = f"{field} 2"
+                            if left_key in row_dict:
+                                detail[left_key] = _json_safe_scalar(row_dict.get(left_key, ""))
+                            if right_key in row_dict:
+                                detail[right_key] = _json_safe_scalar(row_dict.get(right_key, ""))
+                        for field in ("doi_display", "doi_href", "doi_title"):
+                            left_key = f"{field} 1"
+                            right_key = f"{field} 2"
+                            if left_key in row_dict:
+                                detail[left_key] = _json_safe_scalar(row_dict.get(left_key, ""))
+                            if right_key in row_dict:
+                                detail[right_key] = _json_safe_scalar(row_dict.get(right_key, ""))
+                        for col in optional_columns:
+                            detail[col] = _json_safe_scalar(row_dict.get(col, ""))
+                        details.append(detail)
 
-                edges.append({
-                    "source": winner,
-                    "target": loser,
-                    "weight": int(len(edge_df)),
-                    "details": details,
-                })
+                    comparison_weight = int(len(edge_df))
+                    study_weight = int(len(study_titles)) if study_titles else comparison_weight
+                    edges_local.append({
+                        "source": winner,
+                        "target": loser,
+                        "comparison_weight": comparison_weight,
+                        "study_weight": study_weight,
+                        "details": details,
+                    })
+                return edges_local
 
-            if not edges:
+            edges = _build_edges(category_df)
+            edges_with_self = _build_edges(category_df_with_self)
+
+            if not edges and not edges_with_self:
                 continue
 
-            edges = sorted(edges, key=lambda edge: edge["weight"], reverse=True)
+            edges = sorted(edges, key=lambda edge: edge["comparison_weight"], reverse=True)
+            edges_with_self = sorted(edges_with_self, key=lambda edge: edge["comparison_weight"], reverse=True)
             mode_graph["usage_categories"][usage_category] = {
                 "nodes": _weighted_circular_node_order(category_nodes, edges),
                 "edges": edges,
+                "edges_with_self": edges_with_self,
+                "ranking_edges": edges,
+                "ranking_edges_with_self": edges_with_self,
+                "unique_study_count": int(len(graph_study_titles)),
+                "node_colors": node_colors,
             }
 
         graph_data[mode_name] = mode_graph
@@ -2575,10 +4852,10 @@ def create_interactive_model_architecture_graph_html(
     --ink: #17212b;
     --muted: #5d6d7e;
     --line: #d6dde5;
-    --blue: #1191FA;
-    --blue-dark: #004285;
-    --blue-soft: #DCEEFF;
-    --accent: #FC6039;
+    --blue: #2f6f9f;
+    --blue-dark: #1f4f73;
+    --blue-soft: #d9e9f5;
+    --accent: #d46b35;
     --bg: #FFFFFF;
   }}
   body {{
@@ -2646,7 +4923,7 @@ def create_interactive_model_architecture_graph_html(
   }}
   .layout {{
     display: grid;
-    grid-template-columns: minmax(520px, 1fr) minmax(360px, 520px);
+    grid-template-columns: minmax(220px, 280px) minmax(520px, 1fr) minmax(360px, 520px);
     gap: 14px;
     padding: 14px;
   }}
@@ -2663,6 +4940,22 @@ def create_interactive_model_architecture_graph_html(
     padding: 12px;
     border-bottom: 1px solid var(--line);
   }}
+  .toolbar label {{
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }}
+  .checkbox-label {{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+  }}
+  .checkbox-label input {{
+    width: 16px;
+    height: 16px;
+    margin: 0;
+  }}
   select {{
     max-width: 520px;
     padding: 8px 10px;
@@ -2670,6 +4963,36 @@ def create_interactive_model_architecture_graph_html(
     border-radius: 6px;
     background: #fff;
     color: var(--ink);
+  }}
+  .ranking {{
+    padding: 14px;
+    max-height: 770px;
+    overflow: auto;
+  }}
+  .ranking h2 {{
+    margin: 0 0 6px;
+    font-size: 16px;
+  }}
+  .ranking .meta {{
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 12px;
+  }}
+  .ranking ol {{
+    margin: 0;
+    padding-left: 18px;
+  }}
+  .ranking li {{
+    margin: 0 0 10px;
+    line-height: 1.35;
+  }}
+  .ranking .node-name {{
+    font-weight: 800;
+  }}
+  .ranking .score {{
+    color: var(--muted);
+    font-size: 11px;
+    display: block;
   }}
   svg {{
     width: 100%;
@@ -2707,7 +5030,7 @@ def create_interactive_model_architecture_graph_html(
   .edge text {{
     font-size: 11px;
     font-weight: 700;
-    fill: #203040;
+    fill: #17212b;
     paint-order: stroke;
     stroke: white;
     stroke-width: 4px;
@@ -2762,6 +5085,9 @@ def create_interactive_model_architecture_graph_html(
     .layout {{
       grid-template-columns: 1fr;
     }}
+    .ranking {{
+      max-height: none;
+    }}
     svg {{
       height: 620px;
     }}
@@ -2779,10 +5105,23 @@ def create_interactive_model_architecture_graph_html(
   </div>
 </header>
 <main class="layout">
+  <aside class="panel">
+    <div class="ranking" id="ranking">
+      <h2>Elo ranking</h2>
+      <div class="meta" id="rankingMeta">Select a usage category.</div>
+      <div class="empty">The ranking will appear here.</div>
+    </div>
+  </aside>
   <section class="panel">
     <div class="toolbar">
       <label for="mode">Comparison level</label>
       <select id="mode"></select>
+      <label for="weight">Arrow weight</label>
+      <select id="weight"></select>
+      <label class="checkbox-label" for="selfEdges">
+        <input id="selfEdges" type="checkbox" />
+        <span>Show self-directed edges</span>
+      </label>
       <label for="category">Usage category</label>
       <select id="category"></select>
     </div>
@@ -2796,10 +5135,15 @@ def create_interactive_model_architecture_graph_html(
 <script>
 const DATA = JSON.parse(document.getElementById("graph-data").textContent);
 const modeSelect = document.getElementById("mode");
+const weightSelect = document.getElementById("weight");
+const selfEdgesSelect = document.getElementById("selfEdges");
 const categorySelect = document.getElementById("category");
+const ranking = document.getElementById("ranking");
+const rankingMeta = document.getElementById("rankingMeta");
 const svg = document.getElementById("graph");
 const details = document.getElementById("details");
 const NS = "http://www.w3.org/2000/svg";
+let currentWeightMode = "comparison";
 
 function esc(value) {{
   return (value ?? "").toString()
@@ -2814,6 +5158,20 @@ function numberText(value) {{
   if (value === null || value === undefined || value === "") return "";
   const n = Number(value);
   return Number.isFinite(n) ? n.toFixed(4).replace(/0+$/, "").replace(/\\.$/, "") : esc(value);
+}}
+
+function paperReference(author, year, doiDisplay, doiHref, doiTitle) {{
+  const citationParts = [];
+  const authorText = (author ?? "").toString().trim();
+  const yearText = (year ?? "").toString().trim();
+  if (authorText) citationParts.push(esc(authorText));
+  if (yearText) citationParts.push(esc(yearText));
+  const citation = citationParts.join(", ");
+  const doiChip = doiHref
+    ? `<a class="doi-chip" href="${{esc(doiHref)}}" target="_blank" rel="noopener noreferrer" title="${{esc(doiTitle || doiHref)}}">${{esc(doiDisplay || "DOI")}}</a>`
+    : "";
+  const content = [citation, doiChip].filter(Boolean).join(" ");
+  return content ? `[${{content}}]` : "";
 }}
 
 function wrapLabel(value, width = 18) {{
@@ -2866,13 +5224,97 @@ function curvePoint(start, end, rad, t = 0.78) {{
   return {{x, y, angle}};
 }}
 
+function computeEloRatings(nodes, edges, getWeight) {{
+  const labels = [...nodes];
+  if (!labels.length) return [];
+  if (labels.length === 1) {{
+    return [{{node: labels[0], score: 1}}];
+  }}
+
+  const ratings = new Map(labels.map(node => [node, 1500]));
+  const kFactor = 24;
+  const iterations = 18;
+  const shrinkage = 0.985;
+  const epsilon = 1e-12;
+
+  for (let iter = 0; iter < iterations; iter += 1) {{
+    let maxDelta = 0;
+    for (const edge of edges) {{
+      const winner = edge.source;
+      const loser = edge.target;
+      if (winner === loser) continue;
+      if (!ratings.has(winner) || !ratings.has(loser)) continue;
+      const weight = Math.max(0, Number(getWeight(edge)) || 0);
+      if (!weight) continue;
+      const ratingWinner = ratings.get(winner);
+      const ratingLoser = ratings.get(loser);
+      const expectedWin = 1 / (1 + Math.pow(10, (ratingLoser - ratingWinner) / 400));
+      const delta = kFactor * weight * (1 - expectedWin);
+      const newWinner = ratingWinner + delta;
+      const newLoser = ratingLoser - delta;
+      maxDelta = Math.max(maxDelta, Math.abs(newWinner - ratingWinner), Math.abs(newLoser - ratingLoser));
+      ratings.set(winner, newWinner);
+      ratings.set(loser, newLoser);
+    }}
+
+    const mean = [...ratings.values()].reduce((sum, value) => sum + value, 0) / labels.length;
+    for (const node of labels) {{
+      const centered = (ratings.get(node) || 1500) + (1500 - mean);
+      ratings.set(node, 1500 + (centered - 1500) * shrinkage);
+    }}
+    if (maxDelta < epsilon) break;
+  }}
+
+  return labels
+    .map(node => ({{node, score: ratings.get(node) || 1500}}))
+    .sort((a, b) => {{
+      if (b.score !== a.score) return b.score - a.score;
+      return a.node.localeCompare(b.node, undefined, {{numeric: true, sensitivity: "base"}});
+    }});
+}}
+
+function renderRanking(mode, category, data, getWeight, weightMode, includeSelfEdges) {{
+  const rankingEdges = includeSelfEdges
+    ? (data.ranking_edges_with_self || data.ranking_edges || data.edges_with_self || data.edges || [])
+    : (data.ranking_edges || data.edges || []);
+  const entries = computeEloRatings(data.nodes || [], rankingEdges, getWeight);
+  const weightLabel = weightMode === "study" ? "studies" : "model comparisons";
+  const titleLabel = (DATA[mode] && DATA[mode].label) ? DATA[mode].label : mode;
+  const studyCount = Number(data.unique_study_count || 0);
+  const studyLabel = studyCount ? `${{studyCount}} unique studies` : "no study count available";
+  const metaText = `${{titleLabel}} · ${{category || "All usage categories"}} · ${{studyLabel}} · weighted by ${{weightLabel}} · full win/loss set`;
+  if (!entries.length) {{
+    ranking.innerHTML = `
+      <h2>Elo ranking</h2>
+      <div class="meta">${{esc(metaText)}}</div>
+      <div class="empty">No nodes available for this graph.</div>
+    `;
+    return;
+  }}
+
+  const maxScore = Math.max(...entries.map(entry => entry.score), 0) || 1;
+  ranking.innerHTML = `
+    <h2>Elo ranking</h2>
+    <div class="meta">${{esc(metaText)}}</div>
+    <ol>
+      ${{entries.map((entry, idx) => `
+        <li>
+          <span class="node-name">${{idx + 1}}. ${{esc(entry.node)}}</span>
+          <span class="score">Elo: ${{entry.score.toFixed(1)}} · rel. ${{(entry.score / maxScore * 100).toFixed(1)}}%</span>
+        </li>
+      `).join("")}}
+    </ol>
+  `;
+}}
+
 let currentMode = "";
 
-function renderDetails(edge) {{
+function renderDetails(edge, weightMode) {{
+  const weightLabel = weightMode === "study" ? "studies" : "model comparisons";
   details.className = "";
   details.innerHTML = `
     <div class="detail-title">${{esc(edge.source)}} wins over ${{esc(edge.target)}}</div>
-    <div class="detail-sub">${{edge.weight}} model comparison(s). Arrow points at the loser.</div>
+    <div class="detail-sub">Weighted by ${{weightLabel}}. ${{edge.comparison_weight}} model comparison(s) across ${{edge.study_weight}} study(s). Arrow points at the loser.</div>
     <table>
       <thead>
         <tr>
@@ -2882,19 +5324,25 @@ function renderDetails(edge) {{
           <th>Loss value</th>
           <th>Metric</th>
           <th>Comparator block</th>
-          <th>Study title</th>
         </tr>
       </thead>
       <tbody>
         ${{edge.details.map(d => `
           <tr>
-            <td>${{esc(d.winner_model)}}<br/><small>${{esc(d.winner_node)}}</small></td>
+            <td>
+              ${{esc(d.winner_model)}}
+              ${{paperReference(d.winner_first_author, d.winner_year, d.winner_doi_display, d.winner_doi_href, d.winner_doi_title)}}
+              <br/><small>${{esc(d.winner_node)}}</small>
+            </td>
             <td>${{numberText(d.winner_metric_value)}}</td>
-            <td>${{esc(d.loser_model)}}<br/><small>${{esc(d.loser_node)}}</small></td>
+            <td>
+              ${{esc(d.loser_model)}}
+              ${{paperReference(d.loser_first_author, d.loser_year, d.loser_doi_display, d.loser_doi_href, d.loser_doi_title)}}
+              <br/><small>${{esc(d.loser_node)}}</small>
+            </td>
             <td>${{numberText(d.loser_metric_value)}}</td>
             <td>${{esc(d["Main metric"] || d["Ev metrics"] || "")}}</td>
             <td>${{esc(d["Comparator block"] || "")}}</td>
-            <td>${{esc(d.Title || "")}}</td>
           </tr>
         `).join("")}}
       </tbody>
@@ -2907,40 +5355,53 @@ function renderModeOptions() {{
   modeSelect.innerHTML = entries.map(([key, value]) => `<option value="${{esc(key)}}">${{esc(value.label || key)}}</option>`).join("");
 }}
 
+function renderWeightOptions() {{
+  weightSelect.innerHTML = `
+    <option value="comparison">Model comparisons</option>
+    <option value="study">Studies</option>
+  `;
+}}
+
 function renderCategoryOptions(mode) {{
   const modeData = DATA[mode] || {{}};
   const categories = Object.keys(modeData.usage_categories || {{}}).sort();
   categorySelect.innerHTML = categories.map(value => `<option value="${{esc(value)}}">${{esc(value)}}</option>`).join("");
 }}
 
-function renderGraph(mode, category) {{
+function renderGraph(mode, category, weightMode = "comparison", includeSelfEdges = false) {{
+  currentWeightMode = weightMode;
   svg.innerHTML = "";
+  svg.setAttribute("viewBox", "0 0 980 760");
   details.className = "empty";
   details.textContent = "Click an arrow to inspect the comparisons behind it.";
 
   const modeData = DATA[mode] || {{usage_categories: {{}}}};
   const data = modeData.usage_categories?.[category] || {{nodes: [], edges: []}};
-  const width = 900;
-  const height = 720;
+  const baseEdges = includeSelfEdges ? (data.edges_with_self || data.edges || []) : (data.edges || []);
+  const width = 980;
+  const height = 760;
   const cx = width / 2;
   const cy = height / 2;
-  const radius = Math.min(width, height) * 0.37;
+  const radius = Math.min(width, height) * 0.44;
   const nodeCount = data.nodes.length || 1;
   const nodeRadius = Math.max(
-    16,
-    Math.min(38, Math.round(42 - (nodeCount * 0.75)))
+    18,
+    Math.min(44, Math.round(46 - (nodeCount * 0.65)))
   );
-  const weights = data.edges.map(e => e.weight);
+  const getWeight = (edge) => weightMode === "study" ? edge.study_weight : edge.comparison_weight;
+  const weights = baseEdges.map(e => getWeight(e));
   const minLog = weights.length ? Math.min(...weights.map(w => Math.log1p(w))) : 0;
   const maxLog = weights.length ? Math.max(...weights.map(w => Math.log1p(w))) : 0;
   const strength = (w) => maxLog === minLog ? 1 : (Math.log1p(w) - minLog) / (maxLog - minLog);
   const edgeRank = new Map(
-    [...data.edges]
-      .sort((a, b) => b.weight - a.weight)
+    [...baseEdges]
+      .sort((a, b) => getWeight(b) - getWeight(a))
       .map((edge, idx) => [`${{edge.source}}|||${{edge.target}}`, idx])
   );
-  const renderedEdges = [...data.edges].sort((a, b) => {{
-    if (a.weight !== b.weight) return a.weight - b.weight;
+  const renderedEdges = [...baseEdges].sort((a, b) => {{
+    const weightA = getWeight(a);
+    const weightB = getWeight(b);
+    if (weightA !== weightB) return weightA - weightB;
     const sourceCmp = (a.source || "").localeCompare(b.source || "", undefined, {{numeric: true, sensitivity: "base"}});
     if (sourceCmp !== 0) return sourceCmp;
     return (a.target || "").localeCompare(b.target || "", undefined, {{numeric: true, sensitivity: "base"}});
@@ -2957,7 +5418,7 @@ function renderGraph(mode, category) {{
     orient: "auto",
     markerUnits: "strokeWidth",
   }});
-  marker.appendChild(makeSvg("path", {{d: "M0,0 L0,6 L9,3 z", fill: "#004285"}}));
+  marker.appendChild(makeSvg("path", {{d: "M0,0 L0,6 L9,3 z", fill: "#2f6f9f"}}));
   defs.appendChild(marker);
   const hoverMarkerVisible = makeSvg("marker", {{
     id: "arrowhead-hover",
@@ -2968,7 +5429,7 @@ function renderGraph(mode, category) {{
     orient: "auto",
     markerUnits: "strokeWidth",
   }});
-  hoverMarkerVisible.appendChild(makeSvg("path", {{d: "M0,0 L0,6 L9,3 z", fill: "#FC6039"}}));
+  hoverMarkerVisible.appendChild(makeSvg("path", {{d: "M0,0 L0,6 L9,3 z", fill: "#d46b35"}}));
   defs.appendChild(hoverMarkerVisible);
   const hoverMarker = makeSvg("marker", {{
     id: "arrowhead-hit-area",
@@ -3000,7 +5461,8 @@ function renderGraph(mode, category) {{
     const source = positions.get(edge.source);
     const target = positions.get(edge.target);
     if (!source || !target) return;
-    const s = strength(edge.weight);
+    const edgeWeight = getWeight(edge);
+    const s = strength(edgeWeight);
     const strokeWidth = 1 + 5 * s;
     const edgeKey = `${{edge.source}}|||${{edge.target}}`;
     const rank = edgeRank.get(edgeKey) ?? i;
@@ -3011,23 +5473,61 @@ function renderGraph(mode, category) {{
     const dx = target.x - source.x;
     const dy = target.y - source.y;
     const length = Math.hypot(dx, dy) || 1;
-    const ux = dx / length;
-    const uy = dy / length;
-    const start = {{x: source.x + ux * nodeRadius, y: source.y + uy * nodeRadius}};
-    const end = {{x: target.x - ux * nodeRadius, y: target.y - uy * nodeRadius}};
-    const normal = {{x: -uy, y: ux}};
-    const control = {{
-      x: (start.x + end.x) / 2 + normal.x * rad * length,
-      y: (start.y + end.y) / 2 + normal.y * rad * length,
-    }};
-    const path = `M ${{start.x}} ${{start.y}} Q ${{control.x}} ${{control.y}} ${{end.x}} ${{end.y}}`;
-    const label = curvePoint(start, end, rad);
+    let path = "";
+    let label = {{x: source.x, y: source.y, angle: 0}};
+
+    if (edge.source === edge.target) {{
+      const centerDx = source.x - cx;
+      const centerDy = source.y - cy;
+      const centerLength = Math.hypot(centerDx, centerDy) || 1;
+      const outX = centerDx / centerLength;
+      const outY = centerDy / centerLength;
+      const sideX = -outY;
+      const sideY = outX;
+      const loopRadius = nodeRadius * 2.4 + 22 + (18 * s);
+      const spread = nodeRadius * 1.15;
+      const start = {{
+        x: source.x + outX * (nodeRadius * 1.05) + sideX * spread * 0.35,
+        y: source.y + outY * (nodeRadius * 1.05) + sideY * spread * 0.35,
+      }};
+      const end = {{
+        x: source.x + outX * (nodeRadius * 1.05) - sideX * spread * 0.35,
+        y: source.y + outY * (nodeRadius * 1.05) - sideY * spread * 0.35,
+      }};
+      const control1 = {{
+        x: source.x + outX * loopRadius + sideX * loopRadius * 0.72,
+        y: source.y + outY * loopRadius + sideY * loopRadius * 0.72,
+      }};
+      const control2 = {{
+        x: source.x + outX * loopRadius - sideX * loopRadius * 0.72,
+        y: source.y + outY * loopRadius - sideY * loopRadius * 0.72,
+      }};
+      path = `M ${{start.x}} ${{start.y}} C ${{control1.x}} ${{control1.y}} ${{control2.x}} ${{control2.y}} ${{end.x}} ${{end.y}}`;
+      label = {{
+        x: source.x + outX * (loopRadius * 0.95) + sideX * (loopRadius * 0.55),
+        y: source.y + outY * (loopRadius * 0.95) + sideY * (loopRadius * 0.55),
+        angle: 0,
+      }};
+    }} else {{
+      const ux = dx / length;
+      const uy = dy / length;
+      const start = {{x: source.x + ux * nodeRadius, y: source.y + uy * nodeRadius}};
+      const end = {{x: target.x - ux * nodeRadius, y: target.y - uy * nodeRadius}};
+      const normal = {{x: -uy, y: ux}};
+      const control = {{
+        x: (start.x + end.x) / 2 + normal.x * rad * length,
+        y: (start.y + end.y) / 2 + normal.y * rad * length,
+      }};
+      path = `M ${{start.x}} ${{start.y}} Q ${{control.x}} ${{control.y}} ${{end.x}} ${{end.y}}`;
+      label = curvePoint(start, end, rad);
+    }}
 
     const group = makeSvg("g", {{"class": "edge"}});
     group.appendChild(makeSvg("path", {{
       class: "hit-area",
       d: path,
       "marker-end": "url(#arrowhead-hit-area)",
+      "stroke-width": edge.source === edge.target ? Math.max(32, strokeWidth * 4) : 22,
     }}));
     group.appendChild(makeSvg("path", {{
       class: "visible-edge",
@@ -3042,20 +5542,27 @@ function renderGraph(mode, category) {{
       transform: `rotate(${{label.angle}} ${{label.x}} ${{label.y}})`,
       "text-anchor": "middle",
       "dominant-baseline": "central",
-    }}, edge.weight.toString()));
+    }}, edgeWeight.toString()));
     group.addEventListener("click", () => {{
       svg.querySelectorAll(".edge").forEach(el => el.classList.remove("active"));
       group.classList.add("active");
       currentMode = mode;
-      renderDetails(edge);
+      renderDetails(edge, weightMode);
     }});
     svg.appendChild(group);
   }});
 
+  renderRanking(mode, category, data, getWeight, weightMode, includeSelfEdges);
+
   data.nodes.forEach(node => {{
     const p = positions.get(node);
     const group = makeSvg("g", {{"class": "node"}});
-    group.appendChild(makeSvg("circle", {{cx: p.x, cy: p.y, r: nodeRadius}}));
+    group.appendChild(makeSvg("circle", {{
+      cx: p.x,
+      cy: p.y,
+      r: nodeRadius,
+      fill: data.node_colors?.[node] || "#d9e9f5",
+    }}));
     const text = makeSvg("text", {{
       x: p.x,
       y: p.y,
@@ -3075,26 +5582,39 @@ function renderGraph(mode, category) {{
 }}
 
 renderModeOptions();
+renderWeightOptions();
 currentMode = modeSelect.options.length ? modeSelect.value : "";
+currentWeightMode = weightSelect.options.length ? weightSelect.value : currentWeightMode;
 renderCategoryOptions(currentMode);
 
 modeSelect.addEventListener("change", () => {{
   currentMode = modeSelect.value;
   renderCategoryOptions(currentMode);
   categorySelect.selectedIndex = 0;
-  renderGraph(currentMode, categorySelect.value);
+  renderGraph(currentMode, categorySelect.value, weightSelect.value || currentWeightMode, selfEdgesSelect.checked);
 }});
 
-categorySelect.addEventListener("change", () => renderGraph(currentMode, categorySelect.value));
+weightSelect.addEventListener("change", () => {{
+  currentWeightMode = weightSelect.value;
+  renderGraph(currentMode, categorySelect.value, currentWeightMode, selfEdgesSelect.checked);
+}});
+
+selfEdgesSelect.addEventListener("change", () => renderGraph(currentMode, categorySelect.value, weightSelect.value || currentWeightMode, selfEdgesSelect.checked));
+
+categorySelect.addEventListener("change", () => renderGraph(currentMode, categorySelect.value, weightSelect.value || currentWeightMode, selfEdgesSelect.checked));
 
 if (modeSelect.options.length) {{
   modeSelect.selectedIndex = 0;
   currentMode = modeSelect.value;
+  if (weightSelect.options.length) {{
+    weightSelect.selectedIndex = 0;
+    currentWeightMode = weightSelect.value;
+  }}
   renderCategoryOptions(currentMode);
   if (categorySelect.options.length) {{
     categorySelect.selectedIndex = 0;
   }}
-  renderGraph(currentMode, categorySelect.value);
+  renderGraph(currentMode, categorySelect.value, weightSelect.value || currentWeightMode, selfEdgesSelect.checked);
 }} else {{
   details.textContent = "No comparisons available.";
 }}
@@ -3122,7 +5642,18 @@ if __name__ == "__main__":
     file_path = "../Data extraction Dutch cNLP tools 10Jun2026.xlsx"
     df = process_excel_with_mappings(
         file_path,
-        ["Dev region", "Ev region", "NLP Task description", "Dev size", "Ev size"],
+        [
+            "Dev region",
+            "Ev region",
+            # Study-level note and region fields can legitimately contain
+            # multiple text types or multiple regions for a single study.
+            "Dev text type",
+            "Ev text type",
+            "NLP Task description",
+            "Dev size",
+            "Ev size",
+            "Ev metrics"
+        ],
         "raw_data_mappings",
     )
 
@@ -3132,9 +5663,21 @@ if __name__ == "__main__":
     interactive_html = create_interactive_model_architecture_graph_html(pairwise)
     comparison_counts = _architecture_comparison_counts_by_usage_category(pairwise)
     parsed_eval_sizes = plot_eval_sample_size_distributions(df)
+    text_type_distributions = plot_text_type_study_distributions(df)
+    region_province_maps = plot_region_study_province_maps(df)
+    any_text_region_panel = plot_any_dev_eval_text_region_panel(df)
+    ev_metric_overview = plot_ev_metric_overview_by_usage_category(df)
+    publication_panel = plot_metrics_eval_sizes_ie_panel(df, pairwise)
     architecture_year_plots = plot_model_architecture_percentages_by_year(df)
     model_catalog_html = create_model_catalog_dashboard_html(df)
     available_models_docx = export_available_models_docx(df)
+    architecture_study_counts = (
+        df.dropna(subset=["Title", "Model architecture category"])
+        .drop_duplicates(["Title", "Model architecture category"])
+        .groupby("Model architecture category", as_index=False)
+        .size()
+        .sort_values(["size", "Model architecture category"], ascending=[False, True])
+    )
     eval_size_counts = (
         parsed_eval_sizes.groupby("unit", as_index=False)
         .size()
@@ -3149,8 +5692,10 @@ if __name__ == "__main__":
     print(eval_size_counts.to_string(index=False))
     print("\nArchitecture-by-year plots written for:")
     print(", ".join(str(key) for key in architecture_year_plots.keys()))
+    print("\nNumber of studies using each architecture type:")
+    print(architecture_study_counts.to_string(index=False))
     print("Wrote matching study-count plots to model_architecture_percentages_by_year/.")
-    print("Wrote panel study-count figure to model_architecture_percentages_by_year/architecture_study_counts_by_year_panels.png.")
+    print("Wrote panel study-count figure to model_architecture_percentages_by_year/architecture_study_counts_by_year_panels.pdf.")
     print(f"Wrote graph visualization with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
     print(
         "Wrote separate usage-category graph visualizations to "
@@ -3160,5 +5705,8 @@ if __name__ == "__main__":
     print(f"Wrote interactive graph HTML to {interactive_html}.")
     print(f"Wrote model catalog HTML to {model_catalog_html}.")
     print("Wrote evaluation sample-size distributions to eval_sample_size_distributions/.")
+    print(f"Wrote any-dev/eval text+region panel to {any_text_region_panel}.")
+    print(f"Wrote evaluation metric overview to {ev_metric_overview['heatmap_pdf']}.")
+    print(f"Wrote publication panel to {publication_panel['pdf']}.")
     print("Wrote architecture-by-year distributions to model_architecture_percentages_by_year/.")
     print(f"Wrote available-model table to {available_models_docx}.")

@@ -95,6 +95,16 @@ ARCHITECTURE_FALLBACK_COLORS = [
     "#8a63a8",
 ]
 
+CONTEXTUAL_QUALIFIER_SENTIMENT_ORDER = [
+    "Insufficient",
+    "Mixed or moderate",
+    "Feasible",
+    "Potential",
+    "Good or sufficient",
+    "Effective",
+    "High or very good",
+]
+
 TEXT_TYPE_SPLIT_ALIASES = {
     "medical summaries": "Survey/progress report",
     "progress reports": "Survey/progress report",
@@ -1131,7 +1141,13 @@ def _plot_text_type_study_count_bars(
         color=PLOT_TEXT_LIGHT,
     )
 
-    fig.tight_layout()
+    fig.subplots_adjust(
+        left=0.16,
+        right=0.91,
+        bottom=0.20,
+        top=0.94,
+        hspace=0.72,
+    )
     fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
     plt.close(fig)
 
@@ -1571,6 +1587,218 @@ def plot_ev_metric_overview_by_usage_category(
     }
 
 
+def _split_contextual_qualifier_labels(value: object) -> list[str]:
+    if pd.isna(value):
+        return []
+
+    labels = []
+    for label in re.split(r"[,;]", str(value)):
+        clean_label = label.strip()
+        if clean_label:
+            labels.append(clean_label)
+    return labels
+
+
+def _contextual_qualifier_order_from_mapping(mapping_path: Path) -> list[str]:
+    if not mapping_path.exists():
+        return []
+
+    with mapping_path.open("r", encoding="utf-8") as f:
+        mapping = json.load(f)
+
+    ordered_labels: list[str] = []
+    for mapped_value in mapping.values():
+        for label in _split_contextual_qualifier_labels(mapped_value):
+            if label not in ordered_labels:
+                ordered_labels.append(label)
+    return ordered_labels
+
+
+def _study_contextual_qualifier_counts_by_usage_category(
+    df: pd.DataFrame,
+    qualifier_column: str = "Contextual qualifier(s)",
+) -> pd.DataFrame:
+    required_columns = ["Title", "Usage category", qualifier_column]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(
+            f"Missing expected columns: {missing_columns}. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    subset = df[required_columns].copy()
+    subset = subset.dropna(subset=["Title", "Usage category", qualifier_column])
+    subset["study_id"] = subset["Title"].astype(str).str.strip()
+    subset["usage_category"] = subset["Usage category"].astype(str).str.strip()
+    subset = subset[(subset["study_id"] != "") & (subset["usage_category"] != "")]
+    if subset.empty:
+        return pd.DataFrame(
+            columns=["Usage category", "qualifier", "count", "total_studies", "percentage"]
+        )
+
+    exploded_rows = []
+    for _, row in subset.iterrows():
+        study_id = row["study_id"]
+        usage_category = row["usage_category"]
+        for qualifier in _split_contextual_qualifier_labels(row[qualifier_column]):
+            exploded_rows.append(
+                {
+                    "study_id": study_id,
+                    "Usage category": usage_category,
+                    "qualifier": qualifier,
+                }
+            )
+
+    if not exploded_rows:
+        return pd.DataFrame(
+            columns=["Usage category", "qualifier", "count", "total_studies", "percentage"]
+        )
+
+    exploded = pd.DataFrame(exploded_rows).drop_duplicates(
+        ["study_id", "Usage category", "qualifier"]
+    )
+    usage_totals = (
+        exploded.groupby("Usage category", as_index=False)
+        .agg(total_studies=("study_id", "nunique"))
+    )
+    counts = (
+        exploded.groupby(["Usage category", "qualifier"], as_index=False)
+        .agg(count=("study_id", "nunique"))
+        .merge(usage_totals, on="Usage category", how="left")
+        .sort_values(["Usage category", "count", "qualifier"], ascending=[True, False, True])
+        .reset_index(drop=True)
+    )
+    counts["percentage"] = counts["count"] / counts["total_studies"] * 100.0
+    counts.attrs["total_studies"] = int(exploded["study_id"].nunique())
+    return counts
+
+
+def plot_contextual_qualifier_matrix_by_usage_category(
+    df: pd.DataFrame,
+    output_dir: str = "contextual_qualifier_overview",
+    mapping_path: str | Path = "raw_data_mappings/Contextual qualifier(s).json",
+) -> dict[str, Path]:
+    """
+    Plot a paper-ready matrix of contextual qualifiers by NLP usage category.
+
+    The plot uses the normalized ``Contextual qualifier(s)`` JSON mapping,
+    splits multi-qualifier cells, and counts each study once per
+    qualifier/usage-category pair.
+    """
+
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+
+    os.environ.setdefault(
+        "MPLCONFIGDIR",
+        str(Path(".matplotlib_cache").resolve()),
+    )
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, Normalize
+
+    _setup_publication_style()
+
+    counts = _study_contextual_qualifier_counts_by_usage_category(df)
+    long_csv = output_dir_path / "contextual_qualifiers_by_usage_category_long.csv"
+    matrix_csv = output_dir_path / "contextual_qualifiers_by_usage_category_matrix.csv"
+    counts.to_csv(long_csv, index=False)
+
+    mapping_order = _contextual_qualifier_order_from_mapping(Path(mapping_path))
+    observed_order = []
+    if not counts.empty:
+        observed_order = (
+            counts.groupby("qualifier", as_index=False)
+            .agg(total_count=("count", "sum"))
+            .sort_values(["total_count", "qualifier"], ascending=[False, True])["qualifier"]
+            .tolist()
+        )
+    observed_labels = set(observed_order)
+    qualifier_order = [
+        label for label in CONTEXTUAL_QUALIFIER_SENTIMENT_ORDER if label in observed_labels
+    ]
+    qualifier_order.extend(
+        label for label in mapping_order if label in observed_labels and label not in qualifier_order
+    )
+    qualifier_order.extend(label for label in observed_order if label not in qualifier_order)
+
+    if counts.empty or not qualifier_order:
+        pd.DataFrame().to_csv(matrix_csv)
+        fig, ax = plt.subplots(figsize=(PUB_DOUBLE_COL_WIDTH, 3.2))
+        ax.text(0.5, 0.5, "No contextual qualifiers available.", ha="center")
+        ax.set_axis_off()
+        fig.tight_layout()
+        output_path = output_dir_path / "contextual_qualifiers_by_usage_category_matrix.pdf"
+        fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
+        plt.close(fig)
+        return {
+            "long_csv": long_csv,
+            "matrix_csv": matrix_csv,
+            "matrix_pdf": output_path,
+        }
+
+    usage_categories = sorted(counts["Usage category"].unique())
+    pivot = (
+        counts.pivot(index="Usage category", columns="qualifier", values="count")
+        .reindex(index=usage_categories, columns=qualifier_order)
+        .fillna(0)
+        .astype(int)
+    )
+    pivot.to_csv(matrix_csv)
+
+    fig_width = max(PUB_DOUBLE_COL_WIDTH, 1.0 * len(qualifier_order) + 3.2)
+    fig_height = max(2.6, 0.64 * len(usage_categories) + 1.7)
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    cmap = LinearSegmentedColormap.from_list(
+        "qualifier_green_tint",
+        ["#f7fbf7", "#dcefdc", "#b7dcb8", "#79bd82", "#3f8f56"],
+    )
+    vmax = max(int(pivot.to_numpy().max()), 1)
+    norm = Normalize(vmin=0, vmax=vmax)
+    im = ax.imshow(pivot.to_numpy(), aspect="auto", cmap=cmap, norm=norm)
+
+    ax.set_xticks(range(len(qualifier_order)))
+    ax.set_xticklabels(
+        [textwrap.fill(str(qualifier), width=15) for qualifier in qualifier_order],
+        rotation=35,
+        ha="right",
+    )
+    ax.set_yticks(range(len(usage_categories)))
+    ax.set_yticklabels(usage_categories)
+    ax.set_title("Contextual qualifiers by NLP usage category")
+    ax.set_xlabel("Contextual qualifier")
+    ax.set_ylabel("NLP usage\ncategory")
+
+    for i, usage_category in enumerate(usage_categories):
+        for j, qualifier in enumerate(qualifier_order):
+            value = int(pivot.loc[usage_category, qualifier])
+            if value == 0:
+                continue
+            ax.text(
+                j,
+                i,
+                str(value),
+                ha="center",
+                va="center",
+                fontsize=9.0,
+                color="white" if value >= vmax * 0.55 else PLOT_TEXT_DARK,
+                fontweight="bold",
+            )
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label("Unique studies")
+    fig.tight_layout()
+    matrix_pdf = output_dir_path / "contextual_qualifiers_by_usage_category_matrix.pdf"
+    fig.savefig(matrix_pdf, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(fig)
+
+    return {
+        "long_csv": long_csv,
+        "matrix_csv": matrix_csv,
+        "matrix_pdf": matrix_pdf,
+    }
+
+
 def _draw_combined_eval_size_histogram_ax(ax, parsed: pd.DataFrame) -> None:
     from matplotlib.ticker import MaxNLocator
 
@@ -1637,6 +1865,8 @@ def _draw_ev_metric_heatmap_ax(
     ax,
     df: pd.DataFrame,
     top_n_metrics: int = 16,
+    xtick_wrap_width: int = 16,
+    ytick_wrap_width: int | None = None,
 ):
     from matplotlib.colors import LinearSegmentedColormap, Normalize
 
@@ -1671,9 +1901,18 @@ def _draw_ev_metric_heatmap_ax(
     im = ax.imshow(pivot.to_numpy(), aspect="auto", cmap=cmap, norm=norm)
 
     ax.set_xticks(range(len(top_metrics)))
-    ax.set_xticklabels([textwrap.fill(str(metric), width=16) for metric in top_metrics], rotation=35, ha="right")
+    ax.set_xticklabels(
+        [textwrap.fill(str(metric), width=xtick_wrap_width) for metric in top_metrics],
+        rotation=35,
+        ha="right",
+    )
     ax.set_yticks(range(len(usage_categories)))
-    ax.set_yticklabels(usage_categories)
+    ytick_labels = (
+        [textwrap.fill(str(category), width=ytick_wrap_width) for category in usage_categories]
+        if ytick_wrap_width is not None
+        else usage_categories
+    )
+    ax.set_yticklabels(ytick_labels)
     ax.set_title("Evaluation metrics by usage category")
     ax.set_xlabel("Metric")
     ax.set_ylabel("Usage category")
@@ -1694,6 +1933,76 @@ def _draw_ev_metric_heatmap_ax(
                 fontweight="bold",
             )
     return im
+
+
+def plot_evaluation_metrics_sample_size_panel(
+    df: pd.DataFrame,
+    output_dir: str = "paper_panels",
+    top_n_metrics: int = 10,
+) -> dict[str, Path]:
+    """
+    Create a compact paper-ready panel combining evaluation sample sizes and
+    model evaluation metrics by NLP usage category.
+    """
+
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+
+    os.environ.setdefault(
+        "MPLCONFIGDIR",
+        str(Path(".matplotlib_cache").resolve()),
+    )
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+
+    _setup_publication_style()
+
+    parsed = _unique_eval_sample_sizes_by_study(parse_eval_sample_sizes(df))
+
+    fig = plt.figure(figsize=(PUB_DOUBLE_COL_WIDTH, 6.25), constrained_layout=False)
+    gs = GridSpec(
+        2,
+        1,
+        figure=fig,
+        height_ratios=[0.86, 1.35],
+        hspace=0.54,
+    )
+
+    ax_hist = fig.add_subplot(gs[0, 0])
+    ax_heat = fig.add_subplot(gs[1, 0])
+
+    _draw_combined_eval_size_histogram_ax(ax_hist, parsed)
+    ax_hist.set_title("A. Evaluation sample sizes", loc="left", fontweight="bold")
+
+    im = _draw_ev_metric_heatmap_ax(
+        ax_heat,
+        df,
+        top_n_metrics=top_n_metrics,
+        xtick_wrap_width=12,
+        ytick_wrap_width=24,
+    )
+    ax_heat.set_title("", loc="center")
+    ax_heat.set_title("B. Evaluation metrics by NLP usage category", loc="left", fontweight="bold")
+    ax_heat.set_ylabel("NLP usage\ncategory")
+    if im is not None:
+        fig.colorbar(im, ax=ax_heat, fraction=0.035, pad=0.02, label="Unique studies")
+
+    fig.subplots_adjust(
+        left=0.22,
+        right=0.91,
+        bottom=0.20,
+        top=0.94,
+        hspace=0.72,
+    )
+    pdf_path = output_dir_path / "evaluation_metrics_sample_size_panel.pdf"
+    png_path = output_dir_path / "evaluation_metrics_sample_size_panel.png"
+    fig.savefig(pdf_path, dpi=PUB_DPI, bbox_inches="tight")
+    fig.savefig(png_path, dpi=PUB_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return {
+        "pdf": pdf_path,
+        "png": png_path,
+    }
 
 
 def _build_comparison_graph_for_usage_category(
@@ -5652,7 +5961,8 @@ if __name__ == "__main__":
             "NLP Task description",
             "Dev size",
             "Ev size",
-            "Ev metrics"
+            "Ev metrics",
+            "Contextual qualifier(s)"
         ],
         "raw_data_mappings",
     )
@@ -5667,6 +5977,8 @@ if __name__ == "__main__":
     region_province_maps = plot_region_study_province_maps(df)
     any_text_region_panel = plot_any_dev_eval_text_region_panel(df)
     ev_metric_overview = plot_ev_metric_overview_by_usage_category(df)
+    contextual_qualifier_overview = plot_contextual_qualifier_matrix_by_usage_category(df)
+    metrics_sample_size_panel = plot_evaluation_metrics_sample_size_panel(df)
     publication_panel = plot_metrics_eval_sizes_ie_panel(df, pairwise)
     architecture_year_plots = plot_model_architecture_percentages_by_year(df)
     model_catalog_html = create_model_catalog_dashboard_html(df)
@@ -5707,6 +6019,8 @@ if __name__ == "__main__":
     print("Wrote evaluation sample-size distributions to eval_sample_size_distributions/.")
     print(f"Wrote any-dev/eval text+region panel to {any_text_region_panel}.")
     print(f"Wrote evaluation metric overview to {ev_metric_overview['heatmap_pdf']}.")
+    print(f"Wrote contextual qualifier matrix to {contextual_qualifier_overview['matrix_pdf']}.")
+    print(f"Wrote evaluation metrics/sample-size panel to {metrics_sample_size_panel['pdf']}.")
     print(f"Wrote publication panel to {publication_panel['pdf']}.")
     print("Wrote architecture-by-year distributions to model_architecture_percentages_by_year/.")
     print(f"Wrote available-model table to {available_models_docx}.")

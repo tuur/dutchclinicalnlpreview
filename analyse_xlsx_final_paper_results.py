@@ -712,6 +712,96 @@ def _unique_eval_sample_sizes_by_study(parsed: pd.DataFrame) -> pd.DataFrame:
     return study_unique
 
 
+def _eval_sample_size_summary(parsed: pd.DataFrame) -> pd.DataFrame:
+    """Summarize deduplicated evaluation sample sizes by unit."""
+
+    rows = []
+    for unit in ["texts", "patients"]:
+        values = pd.to_numeric(
+            parsed.loc[parsed["unit"] == unit, "sample size"],
+            errors="coerce",
+        ).dropna()
+        if values.empty:
+            rows.append(
+                {
+                    "unit": unit,
+                    "Parsed rows": 0,
+                    "median": pd.NA,
+                    "Q1": pd.NA,
+                    "Q3": pd.NA,
+                    "IQR": pd.NA,
+                }
+            )
+            continue
+
+        q1 = values.quantile(0.25)
+        median = values.median()
+        q3 = values.quantile(0.75)
+        rows.append(
+            {
+                "unit": unit,
+                "Parsed rows": int(values.size),
+                "median": median,
+                "Q1": q1,
+                "Q3": q3,
+                "IQR": q3 - q1,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def _code_model_availability_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Summarize study-level code sharing and model-level availability."""
+
+    required_columns = ["Title", "Model abbreviation", "Code shared", "Model shared"]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        raise ValueError(
+            f"Missing expected columns: {missing_columns}. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    study_ids = df["Title"].astype(str).str.strip().replace("", pd.NA)
+    model_ids = df["Model abbreviation"].astype(str).str.strip().replace("", pd.NA)
+    code_shared = df["Code shared"].astype(str).str.strip().str.lower()
+    model_shared = df["Model shared"].astype(str).str.strip().str.lower()
+
+    total_studies = int(study_ids.dropna().nunique())
+    code_shared_studies = int(
+        study_ids[code_shared.isin({"yes", "partially"})].dropna().nunique()
+    )
+
+    total_unique_models = int(model_ids.dropna().nunique())
+    code_shared_unique_models = int(
+        model_ids[code_shared.isin({"yes", "partially"})].dropna().nunique()
+    )
+
+    total_model_rows = int(model_ids.dropna().size)
+    publicly_available_model_rows = int(model_ids[model_shared.eq("yes")].dropna().size)
+
+    rows = [
+        {
+            "measure": "Studies with shared code",
+            "numerator": code_shared_studies,
+            "denominator": total_studies,
+        },
+        {
+            "measure": "Unique models in code-sharing studies",
+            "numerator": code_shared_unique_models,
+            "denominator": total_unique_models,
+        },
+        {
+            "measure": "Publicly available model rows",
+            "numerator": publicly_available_model_rows,
+            "denominator": total_model_rows,
+        },
+    ]
+    summary = pd.DataFrame(rows)
+    summary["percentage"] = summary["numerator"] / summary["denominator"] * 100.0
+    return summary
+
+
 def _plot_combined_eval_size_histogram(
     parsed: pd.DataFrame,
     output_path: Path,
@@ -3201,6 +3291,7 @@ def plot_architecture_study_count_panels_by_usage_category(
         str(Path(".matplotlib_cache").resolve()),
     )
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
 
     _setup_publication_style()
 
@@ -3220,7 +3311,20 @@ def plot_architecture_study_count_panels_by_usage_category(
             for architecture in panel_df.columns
         }
     )
-    colors = _architecture_color_map(categories)
+    panel_palette = plt.get_cmap("tab20").colors
+    colors = {
+        category: panel_palette[index % len(panel_palette)]
+        for index, category in enumerate(categories)
+    }
+    max_yearly_total = max(
+        (
+            float(panel_df.sum(axis=1).max())
+            for _, panel_df, _ in panels
+            if not panel_df.empty
+        ),
+        default=0.0,
+    )
+    common_ymax = max(1, math.ceil(max_yearly_total * 1.08))
 
     n_panels = len(panels)
     ncols = 2 if n_panels > 1 else 1
@@ -3230,6 +3334,7 @@ def plot_architecture_study_count_panels_by_usage_category(
         nrows,
         ncols,
         figsize=(PUB_DOUBLE_COL_WIDTH, fig_height),
+        sharey=True,
         squeeze=False,
     )
 
@@ -3266,19 +3371,27 @@ def plot_architecture_study_count_panels_by_usage_category(
         ax.set_ylabel("Studies")
         ax.set_xticks(years)
         ax.set_xticklabels([str(year) for year in years], rotation=45, ha="right")
+        ax.set_ylim(0, common_ymax)
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
         ax.grid(axis="y", alpha=0.25)
 
     fig.legend(
         legend_handles.values(),
         legend_handles.keys(),
         loc="lower center",
-        ncol=min(4, max(1, len(legend_handles))),
+        ncol=min(2, max(1, len(legend_handles))),
         frameon=False,
         title="Architecture",
-        bbox_to_anchor=(0.5, -0.01),
+        bbox_to_anchor=(0.5, 0.005),
+        fontsize=8.0,
+        title_fontsize=8.5,
+        handlelength=1.3,
+        handletextpad=0.45,
+        columnspacing=1.2,
+        borderaxespad=0.0,
     )
     fig.suptitle("Number of studies using each architecture by year", y=0.995)
-    fig.tight_layout(rect=(0, 0.05, 1, 0.97))
+    fig.tight_layout(rect=(0, 0.14, 1, 0.97))
     fig.savefig(output_path, dpi=PUB_DPI, bbox_inches="tight")
     plt.close(fig)
     return output_path
@@ -5948,7 +6061,7 @@ def create_usage_category_win_graph(*args, **kwargs):
 
 
 if __name__ == "__main__":
-    file_path = "../Data extraction Dutch cNLP tools 10Jun2026.xlsx"
+    file_path = "Data extraction 17072026.xlsx"
     df = process_excel_with_mappings(
         file_path,
         [
@@ -5990,18 +6103,27 @@ if __name__ == "__main__":
         .size()
         .sort_values(["size", "Model architecture category"], ascending=[False, True])
     )
-    eval_size_counts = (
-        parsed_eval_sizes.groupby("unit", as_index=False)
-        .size()
-        .rename(columns={"size": "Parsed rows"})
-    )
+    eval_size_summary = _eval_sample_size_summary(parsed_eval_sizes)
+    availability_summary = _code_model_availability_summary(df)
 
     print(pairwise.head())
     print(edge_weights)
     print("\nNumber of cross-architecture comparisons per usage category:")
     print(comparison_counts.to_string(index=False))
-    print("\nParsed evaluation sample-size rows:")
-    print(eval_size_counts.to_string(index=False))
+    print("\nEvaluation sample-size summary by unit:")
+    print(
+        eval_size_summary.to_string(
+            index=False,
+            float_format=lambda value: f"{value:.1f}",
+        )
+    )
+    print("\nCode/model availability summary:")
+    print(
+        availability_summary.to_string(
+            index=False,
+            float_format=lambda value: f"{value:.1f}",
+        )
+    )
     print("\nArchitecture-by-year plots written for:")
     print(", ".join(str(key) for key in architecture_year_plots.keys()))
     print("\nNumber of studies using each architecture type:")
